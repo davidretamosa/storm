@@ -21,3 +21,10 @@ venv/
 .vscode/
 .idea/
 .DS_Store
+
+# Plantilla de JMeter: SÍ se versiona (los .jmx generados siguen ignorados)
+!src/3-execution/jmeter/plan.jmx
+
+# Salidas del laboratorio de rendimiento
+src/3-execution/docker/logs/
+src/3-execution/docker/resultados/

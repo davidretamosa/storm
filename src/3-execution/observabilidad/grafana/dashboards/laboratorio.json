@@ -1,0 +1,1407 @@
+{
+  "uid": "lab-rendimiento",
+  "title": "Laboratorio de rendimiento",
+  "description": "Pruebas de carga con JMeter sobre lab-api: tráfico, tiempos, errores y recursos.",
+  "tags": [
+    "jmeter",
+    "rendimiento",
+    "laboratorio"
+  ],
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "version": 1,
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": [
+      "5s",
+      "10s",
+      "30s",
+      "1m",
+      "5m"
+    ]
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "escenario",
+        "label": "Escenario",
+        "type": "query",
+        "datasource": {
+          "type": "influxdb",
+          "uid": "influxdb-jmeter"
+        },
+        "query": "SHOW TAG VALUES FROM \"jmeter\" WITH KEY = \"application\"",
+        "definition": "SHOW TAG VALUES FROM \"jmeter\" WITH KEY = \"application\"",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "sort": 1,
+        "hide": 0
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      },
+      {
+        "name": "Inicio / fin de pruebas",
+        "datasource": {
+          "type": "influxdb",
+          "uid": "influxdb-jmeter"
+        },
+        "enable": true,
+        "iconColor": "orange",
+        "query": "SELECT \"text\" FROM \"events\" WHERE \"application\" =~ /^$escenario$/ AND $timeFilter",
+        "target": {
+          "query": "SELECT \"text\" FROM \"events\" WHERE \"application\" =~ /^$escenario$/ AND $timeFilter",
+          "rawQuery": true,
+          "refId": "Anno"
+        },
+        "textColumn": "text",
+        "tagsColumn": "application"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Estado general",
+      "id": 1,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "API",
+      "id": 2,
+      "description": "Prometheus puede leer las métricas de la aplicación. Si está CAÍDA, la API no responde.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-lab"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-lab"
+          },
+          "expr": "up{job=\"lab-api\"}",
+          "legendFormat": "API",
+          "range": false,
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "CAÍDA",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "EN MARCHA",
+                  "color": "green"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "value",
+        "justifyMode": "center",
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Peticiones enviadas",
+      "id": 3,
+      "description": "Total de peticiones que JMeter ha enviado en el rango de tiempo seleccionado.",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influxdb-jmeter"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influxdb-jmeter"
+          },
+          "query": "SELECT sum(\"count\") FROM \"jmeter\" WHERE \"application\" =~ /^$escenario$/ AND \"transaction\" = 'all' AND \"statut\" = 'all' AND $timeFilter",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "area",
+        "textMode": "value",
+        "justifyMode": "center",
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Peticiones / s",
+      "id": 4,
+      "description": "Throughput actual medido por JMeter.",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influxdb-jmeter"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influxdb-jmeter"
+          },
+          "query": "SELECT sum(\"count\") / 5 FROM \"jmeter\" WHERE \"application\" =~ /^$escenario$/ AND \"transaction\" = 'all' AND \"statut\" = 'all' AND $timeFilter GROUP BY time(5s) fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          },
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "area",
+        "textMode": "value",
+        "justifyMode": "center",
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Errores",
+      "id": 5,
+      "description": "Porcentaje de peticiones fallidas en el rango seleccionado. Objetivo orientativo: < 1 %.",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influxdb-jmeter"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influxdb-jmeter"
+          },
+          "query": "SELECT sum(\"countError\") / sum(\"count\") * 100 FROM \"jmeter\" WHERE \"application\" =~ /^$escenario$/ AND \"transaction\" = 'all' AND \"statut\" = 'all' AND $timeFilter",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.5
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "value",
+        "justifyMode": "center",
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Tiempo de respuesta p95",
+      "id": 6,
+      "description": "El 95 % de las peticiones tarda menos que este valor (media del p95 en el rango). Objetivo orientativo: < 500 ms.",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influxdb-jmeter"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influxdb-jmeter"
+          },
+          "query": "SELECT mean(\"pct95.0\") FROM \"jmeter\" WHERE \"application\" =~ /^$escenario$/ AND \"transaction\" = 'all' AND \"statut\" = 'all' AND $timeFilter",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 300
+              },
+              {
+                "color": "red",
+                "value": 500
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "value",
+        "justifyMode": "center",
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Usuarios concurrentes",
+      "id": 7,
+      "description": "Hilos de JMeter activos a la vez. Si crece mucho sin que suban las peticiones/s, la API se está atascando.",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influxdb-jmeter"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influxdb-jmeter"
+          },
+          "query": "SELECT last(\"meanAT\") FROM \"jmeter\" WHERE \"application\" =~ /^$escenario$/ AND \"transaction\" = 'internal' AND $timeFilter",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "area",
+        "textMode": "value",
+        "justifyMode": "center",
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "row",
+      "title": "Tráfico",
+      "id": 8,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Peticiones / s por operación (JMeter)",
+      "id": 9,
+      "description": "Tráfico enviado por JMeter, repartido según los pesos del escenario.",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influxdb-jmeter"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influxdb-jmeter"
+          },
+          "query": "SELECT sum(\"count\") / 5 FROM \"jmeter\" WHERE \"application\" =~ /^$escenario$/ AND \"transaction\" <> 'all' AND \"transaction\" <> 'internal' AND \"statut\" = 'all' AND $timeFilter GROUP BY time(5s), \"transaction\" fill(0)",
+          "rawQuery": true,
+          "resultFormat": "time_series",
+          "alias": "$tag_transaction"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ],
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Peticiones / s recibidas por la API",
+      "id": 10,
+      "description": "Lo que la aplicación dice haber recibido. Debe coincidir con el panel de la izquierda.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-lab"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 6
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-lab"
+          },
+          "expr": "sum by (method, uri) (rate(http_server_requests_seconds_count{job=\"lab-api\", uri!~\"/actuator.*\"}[30s]))",
+          "legendFormat": "{{method}} {{uri}}",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ],
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Tiempo de respuesta",
+      "id": 11,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "p50 / p95 / p99 global (JMeter)",
+      "id": 12,
+      "description": "Tiempo visto por el cliente (incluye red). Fíjate en p95/p99, no en la media.",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influxdb-jmeter"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 15
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influxdb-jmeter"
+          },
+          "query": "SELECT mean(\"pct50.0\") FROM \"jmeter\" WHERE \"application\" =~ /^$escenario$/ AND \"transaction\" = 'all' AND \"statut\" = 'all' AND $timeFilter GROUP BY time(5s) fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series",
+          "alias": "p50"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influxdb-jmeter"
+          },
+          "query": "SELECT mean(\"pct95.0\") FROM \"jmeter\" WHERE \"application\" =~ /^$escenario$/ AND \"transaction\" = 'all' AND \"statut\" = 'all' AND $timeFilter GROUP BY time(5s) fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series",
+          "alias": "p95"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influxdb-jmeter"
+          },
+          "query": "SELECT mean(\"pct99.0\") FROM \"jmeter\" WHERE \"application\" =~ /^$escenario$/ AND \"transaction\" = 'all' AND \"statut\" = 'all' AND $timeFilter GROUP BY time(5s) fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series",
+          "alias": "p99"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ],
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "p95 por operación (JMeter)",
+      "id": 13,
+      "description": "Qué operación se degrada primero.",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influxdb-jmeter"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 15
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influxdb-jmeter"
+          },
+          "query": "SELECT mean(\"pct95.0\") FROM \"jmeter\" WHERE \"application\" =~ /^$escenario$/ AND \"transaction\" <> 'all' AND \"transaction\" <> 'internal' AND \"statut\" = 'all' AND $timeFilter GROUP BY time(5s), \"transaction\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series",
+          "alias": "$tag_transaction"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ],
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "p95 dentro de la API (servidor)",
+      "id": 14,
+      "description": "Tiempo medido dentro de la aplicación. Si es mucho menor que el de JMeter, el cuello de botella está en la cola de Tomcat o en la red.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-lab"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 15
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-lab"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, method, uri) (rate(http_server_requests_seconds_bucket{job=\"lab-api\", uri!~\"/actuator.*\"}[30s])))",
+          "legendFormat": "{{method}} {{uri}}",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ],
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Errores",
+      "id": 15,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 23
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Errores por código HTTP (JMeter)",
+      "id": 16,
+      "description": "Respuestas marcadas como error por JMeter (código HTTP o aserción fallida).",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influxdb-jmeter"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 24
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influxdb-jmeter"
+          },
+          "query": "SELECT sum(\"count\") FROM \"jmeter\" WHERE \"application\" =~ /^$escenario$/ AND \"responseCode\" =~ /.+/ AND $timeFilter GROUP BY time(5s), \"responseCode\" fill(0)",
+          "rawQuery": true,
+          "resultFormat": "time_series",
+          "alias": "HTTP $tag_responseCode"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ],
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Errores por tipo de excepción (API)",
+      "id": 17,
+      "description": "Errores clasificados por el control de excepciones de la aplicación (ManejadorErrores). Mismo 'tipo' que en logs/app.log.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-lab"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 24
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-lab"
+          },
+          "expr": "sum by (tipo, estado) (rate(api_errores_total{job=\"lab-api\"}[30s]))",
+          "legendFormat": "{{tipo}} ({{estado}})",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ],
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Respuestas por código HTTP (API)",
+      "id": 18,
+      "description": "Todas las respuestas de la API por código (2xx, 4xx, 5xx).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-lab"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 24
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-lab"
+          },
+          "expr": "sum by (status) (rate(http_server_requests_seconds_count{job=\"lab-api\", uri!~\"/actuator.*\"}[30s]))",
+          "legendFormat": "{{status}}",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ],
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Recursos de la aplicación",
+      "id": 19,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU",
+      "id": 20,
+      "description": "Uso de CPU (1 = 100 % de las CPUs asignadas al contenedor). Si se pega al 100 %, la CPU es el cuello de botella.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-lab"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 33
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-lab"
+          },
+          "expr": "process_cpu_usage{job=\"lab-api\"}",
+          "legendFormat": "CPU proceso Java",
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-lab"
+          },
+          "expr": "system_cpu_usage{job=\"lab-api\"}",
+          "legendFormat": "CPU contenedor/sistema",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ],
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Memoria JVM",
+      "id": 21,
+      "description": "Heap = objetos de la aplicación. Si la memoria usada sube sin bajar entre prueba y prueba, puede haber una fuga.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-lab"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 6,
+        "y": 33
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-lab"
+          },
+          "expr": "sum by (area) (jvm_memory_used_bytes{job=\"lab-api\"})",
+          "legendFormat": "usada {{area}}",
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-lab"
+          },
+          "expr": "sum(jvm_memory_max_bytes{job=\"lab-api\", area=\"heap\"})",
+          "legendFormat": "máximo heap",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ],
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Hilos de Tomcat",
+      "id": 22,
+      "description": "Hilos atendiendo peticiones. Si llegan al máximo, las nuevas peticiones esperan en cola y sube el tiempo de respuesta.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-lab"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 33
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-lab"
+          },
+          "expr": "tomcat_threads_busy_threads{job=\"lab-api\"}",
+          "legendFormat": "ocupados",
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-lab"
+          },
+          "expr": "tomcat_threads_config_max_threads{job=\"lab-api\"}",
+          "legendFormat": "máximo",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ],
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Pausas del recolector de basura (GC)",
+      "id": 23,
+      "description": "Fracción del tiempo que la JVM está parada limpiando memoria. Por encima de ~5 % afecta al rendimiento.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-lab"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 33
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-lab"
+          },
+          "expr": "sum(rate(jvm_gc_pause_seconds_sum{job=\"lab-api\"}[1m]))",
+          "legendFormat": "tiempo en GC",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ],
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    }
+  ]
+}
