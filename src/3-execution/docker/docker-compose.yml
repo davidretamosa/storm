@@ -1,0 +1,95 @@
+name: paest-lab
+
+# Laboratorio de rendimiento (ejecutar desde src/3-execution/docker)
+#   docker compose up -d --build          -> arranca API + observabilidad
+#   docker compose run --rm jmeter humo   -> lanza una prueba (humo, normal, pico, estres)
+#   docker compose down                   -> para todo (añade -v para borrar los datos)
+
+services:
+
+  # Aplicación bajo prueba (el .jar de Spring Boot)
+  api:
+    # App temporal de entrada/salida. Cuando la bankapp esté lista: ../../1-input/java-app-mock
+    build: ../../1-input/echo-api
+    container_name: lab-api
+    ports:
+      - "8080:8080"
+    environment:
+      LATENCIA_BASE_MS: ${LATENCIA_BASE_MS:-20}
+      LATENCIA_VARIACION_MS: ${LATENCIA_VARIACION_MS:-30}
+      TASA_ERROR: ${TASA_ERROR:-0.0}
+      TRABAJO_CPU: ${TRABAJO_CPU:-3000}
+      JAVA_OPTS: "-XX:MaxRAMPercentage=75"
+    volumes:
+      - ./logs:/logs
+    # Límite fijo de recursos: así los resultados son comparables entre pruebas
+    # y se ve cuándo la aplicación se queda sin CPU o memoria.
+    deploy:
+      resources:
+        limits:
+          cpus: "${API_CPUS:-1.0}"
+          memory: ${API_MEMORIA:-512M}
+
+  # Recibe las métricas de JMeter (peticiones, tiempos, errores)
+  influxdb:
+    image: influxdb:1.8
+    container_name: lab-influxdb
+    environment:
+      INFLUXDB_DB: jmeter
+      INFLUXDB_HTTP_AUTH_ENABLED: "false"
+      INFLUXDB_REPORTING_DISABLED: "true"
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb-datos:/var/lib/influxdb
+
+  # Recoge las métricas internas de la aplicación (CPU, memoria, JVM, errores)
+  prometheus:
+    image: prom/prometheus:v2.53.2
+    container_name: lab-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+    ports:
+      - "9090:9090"
+    volumes:
+      - ../observabilidad/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-datos:/prometheus
+    depends_on:
+      - api
+
+  # Dashboard: http://localhost:3001 (admin / admin)
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: lab-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/laboratorio.json
+    ports:
+      - "3001:3000"
+    volumes:
+      - ../observabilidad/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../observabilidad/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-datos:/var/lib/grafana
+    depends_on:
+      - influxdb
+      - prometheus
+
+  # Generador de carga. Solo se ejecuta bajo demanda con "docker compose run".
+  jmeter:
+    build: ../jmeter
+    profiles: ["prueba"]
+    volumes:
+      - ../jmeter:/tests
+      - ./resultados:/resultados
+    depends_on:
+      - api
+      - influxdb
+
+volumes:
+  influxdb-datos:
+  prometheus-datos:
+  grafana-datos:

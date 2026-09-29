@@ -1,0 +1,43 @@
+server:
+  port: 8080
+  tomcat:
+    # Necesario para que Micrometer publique los hilos de Tomcat (ocupados / máximos)
+    mbeanregistry:
+      enabled: true
+    threads:
+      max: ${TOMCAT_HILOS_MAX:200}
+
+spring:
+  application:
+    name: lab-api
+
+# Comportamiento simulado (se cambia en el fichero .env, sin recompilar)
+simulacion:
+  latencia-base-ms: ${LATENCIA_BASE_MS:20}
+  latencia-variacion-ms: ${LATENCIA_VARIACION_MS:30}
+  tasa-error: ${TASA_ERROR:0.0}
+  trabajo-cpu: ${TRABAJO_CPU:3000}
+
+lab:
+  logs:
+    dir: ${LOG_DIR:logs}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true   # /actuator/health/liveness y /readiness, útiles en Kubernetes
+  metrics:
+    tags:
+      application: lab-api
+    distribution:
+      # Histogramas para poder calcular p95/p99 en Prometheus
+      percentiles-histogram:
+        http.server.requests: true
+      maximum-expected-value:
+        http.server.requests: 30s
