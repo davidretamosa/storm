@@ -16,11 +16,13 @@ MODEL = {
 }
 THINK_TIMES = {"GET /api/users/{id}": {"GET /api/accounts/{id}": [1000, 2000]}}
 PROFILE = {"vusers": 10, "ramp_up_seconds": 30, "duration_seconds": 120}
+PATH_PARAMS = {"GET /api/accounts/{id}": {"id": [["3", 0.7], ["4", 0.3]]}}
+BODIES = {"POST /api/accounts/{id}/deposit": {"amount": {"type": "number", "min": 10, "max": 50, "decimals": 2, "presence": 1.0}}}
 
 
 def render(tmp_path, **kwargs):
     out = tmp_path / "plan.jmx"
-    generate_jmx(MODEL, THINK_TIMES, PROFILE, str(out), **kwargs)
+    generate_jmx(MODEL, THINK_TIMES, PROFILE, str(out), path_params=PATH_PARAMS, bodies=BODIES, **kwargs)
     return ET.parse(out).getroot()
 
 
@@ -56,9 +58,17 @@ def test_markov_scripts_embed_model(tmp_path):
     assert set(scripts) == {"JSR223PreProcessor", "JSR223Timer", "JSR223PostProcessor"}
 
     embedded = re.search(r"parseText\('''(.*?)'''\)", scripts["JSR223PostProcessor"], re.S).group(1)
-    assert json.loads(embedded) == {**MODEL, "think_time_ms": THINK_TIMES}
+    assert json.loads(embedded) == {**MODEL, "think_time_ms": THINK_TIMES, "path_params": PATH_PARAMS, "bodies": BODIES}
     # JMeter sustituye ${...} en los scripts: no puede aparecer ninguno
     assert all("${" not in script for script in scripts.values())
+
+
+def test_only_requests_with_bodies_send_json(tmp_path):
+    samplers = {s.get("testname"): s for s in render(tmp_path).iter("HTTPSamplerProxy")}
+    deposit = samplers["POST /api/accounts/{id}/deposit"]
+    assert prop(deposit, "HTTPSampler.postBodyRaw") == "true"
+    assert deposit.find(".//elementProp[@elementType='HTTPArgument']/stringProp[@name='Argument.value']").text == "${stormBody}"
+    assert samplers["GET /api/users/{id}"].find("boolProp[@name='HTTPSampler.postBodyRaw']") is None
 
 
 def test_path_params_declared_and_target_configurable(tmp_path):

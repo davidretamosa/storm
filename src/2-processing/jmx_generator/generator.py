@@ -9,11 +9,14 @@ Cada iteración de un usuario virtual es una sesión que recorre la cadena de Ma
         ├── JSR223 PostProcessor (tras cada petición, elige la siguiente)
         └── Switch stormIndex
             └── una petición HTTP por estado de la cadena
+
+Al elegir cada petición, los scripts rellenan sus {parámetros} de ruta y su cuerpo
+JSON con valores generados a partir de los observados (traffic_model/payloads.py).
 """
 import json
 import re
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -26,8 +29,9 @@ def _to_jmeter_path(endpoint: str) -> str:
     return PATH_PARAM.sub(r"${\1}", endpoint)
 
 
-def build_samplers(states: List[str]) -> List[dict]:
+def build_samplers(states: List[str], bodies: Optional[dict] = None) -> List[dict]:
     """Una petición HTTP por estado, en el mismo orden que model['states'] (índice del Switch)."""
+    bodies = bodies or {}
     samplers = []
     for state in states:
         method, endpoint = state.split(" ", 1)
@@ -36,6 +40,8 @@ def build_samplers(states: List[str]) -> List[dict]:
             "method": method,
             "path": _to_jmeter_path(endpoint),
             "params": PATH_PARAM.findall(endpoint),
+            # Solo las peticiones con cuerpos observados envían ${stormBody}
+            "has_body": state in bodies,
         })
     return samplers
 
@@ -55,12 +61,20 @@ def generate_jmx(
     output_path: str,
     host: str = "localhost",
     port: int = 8080,
+    path_params: Optional[dict] = None,
+    bodies: Optional[dict] = None,
 ) -> None:
     """Escribe el .jmx. host y port se pueden sobrescribir al lanzar JMeter (-Jhost= -Jport=)."""
-    samplers = build_samplers(model["states"])
+    path_params = path_params or {}
+    bodies = bodies or {}
+    samplers = build_samplers(model["states"], bodies)
     # Cada {param} de las rutas se declara como variable del plan (valor por defecto 1)
     path_variables = sorted({name for s in samplers for name in s["params"]})
-    model_json = json.dumps({**model, "think_time_ms": think_times}, ensure_ascii=False, separators=(",", ":"))
+    model_json = json.dumps(
+        {**model, "think_time_ms": think_times, "path_params": path_params, "bodies": bodies},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
 
     env = Environment(
         loader=FileSystemLoader(TEMPLATES_DIR),
