@@ -38,18 +38,59 @@
         <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
       </ThreadGroup>
       <hashTree>
-        {% for s in samplers %}
-        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="{{ s.name }}">
-          <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments">
-            <collectionProp name="Arguments.arguments"/>
-          </elementProp>
-          <stringProp name="HTTPSampler.path">{{ s.path }}</stringProp>
-          <stringProp name="HTTPSampler.method">{{ s.method }}</stringProp>
-          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
-          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
-        </HTTPSamplerProxy>
-        <hashTree/>
-        {% endfor %}
+        <TestAction guiclass="TestActionGui" testclass="TestAction" testname="Nueva sesión">
+          <intProp name="ActionProcessor.action">1</intProp>
+          <intProp name="ActionProcessor.target">0</intProp>
+          <stringProp name="ActionProcessor.duration">0</stringProp>
+        </TestAction>
+        <hashTree>
+          <JSR223PreProcessor guiclass="TestBeanGUI" testclass="JSR223PreProcessor" testname="Elegir primera petición">
+            <stringProp name="scriptLanguage">groovy</stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="script">{{ session_start_script }}</stringProp>
+          </JSR223PreProcessor>
+          <hashTree/>
+        </hashTree>
+        <WhileController guiclass="WhileControllerGui" testclass="WhileController" testname="Mientras la sesión siga">
+          <stringProp name="WhileController.condition">${__groovy(vars.get("stormState") != "END")}</stringProp>
+        </WhileController>
+        <hashTree>
+          <JSR223Timer guiclass="TestBeanGUI" testclass="JSR223Timer" testname="Pausa observada (think time)">
+            <stringProp name="scriptLanguage">groovy</stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="script">Long.parseLong(vars.get("stormThinkMs") ?: "0")</stringProp>
+          </JSR223Timer>
+          <hashTree/>
+          <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Elegir siguiente petición (Markov)">
+            <stringProp name="scriptLanguage">groovy</stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="script">{{ next_request_script }}</stringProp>
+          </JSR223PostProcessor>
+          <hashTree/>
+          <SwitchController guiclass="SwitchControllerGui" testclass="SwitchController" testname="Petición actual">
+            <stringProp name="SwitchController.value">${stormIndex}</stringProp>
+          </SwitchController>
+          <hashTree>
+            {% for s in samplers %}
+            <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="{{ s.name }}">
+              <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments">
+                <collectionProp name="Arguments.arguments"/>
+              </elementProp>
+              <stringProp name="HTTPSampler.path">{{ s.path }}</stringProp>
+              <stringProp name="HTTPSampler.method">{{ s.method }}</stringProp>
+              <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+              <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            </HTTPSamplerProxy>
+            <hashTree/>
+            {% endfor %}
+          </hashTree>
+        </hashTree>
       </hashTree>
     </hashTree>
   </hashTree>

@@ -1,4 +1,16 @@
-"""Generación del plan de JMeter (.jmx) a partir del modelo de tráfico."""
+"""Generación del plan de JMeter (.jmx) a partir del modelo de tráfico.
+
+Cada iteración de un usuario virtual es una sesión que recorre la cadena de Markov:
+
+    Thread Group
+    ├── Flow Control Action "Nueva sesión" + JSR223 (elige la primera petición)
+    └── While stormState != END
+        ├── JSR223 Timer         (pausa observada antes de la petición)
+        ├── JSR223 PostProcessor (tras cada petición, elige la siguiente)
+        └── Switch stormIndex
+            └── una petición HTTP por estado de la cadena
+"""
+import json
 import re
 from pathlib import Path
 from typing import Dict, List
@@ -14,39 +26,41 @@ def _to_jmeter_path(endpoint: str) -> str:
     return PATH_PARAM.sub(r"${\1}", endpoint)
 
 
-def build_samplers(markov_matrix: Dict[str, Dict[str, float]], min_probability: float = 0.1) -> List[dict]:
-    """Una petición HTTP por cada transición con probabilidad >= min_probability.
-
-    TODO: de momento es una lista secuencial; falta que JMeter elija la siguiente
-    petición según la probabilidad (p. ej. con Throughput Controllers).
-    """
+def build_samplers(states: List[str]) -> List[dict]:
+    """Una petición HTTP por estado, en el mismo orden que model['states'] (índice del Switch)."""
     samplers = []
-    for source, targets in markov_matrix.items():
-        for target, probability in targets.items():
-            if probability < min_probability:
-                continue
-            method, endpoint = target.split(" ", 1)
-            samplers.append({
-                "name": f"{source} -> {target} ({probability:.0%})",
-                "method": method,
-                "path": _to_jmeter_path(endpoint),
-                "params": PATH_PARAM.findall(endpoint),
-            })
+    for state in states:
+        method, endpoint = state.split(" ", 1)
+        samplers.append({
+            "name": state,
+            "method": method,
+            "path": _to_jmeter_path(endpoint),
+            "params": PATH_PARAM.findall(endpoint),
+        })
     return samplers
 
 
+def _groovy(script: str, model_json: str) -> str:
+    """Script de JMeter: cabecera común con el modelo incrustado + la parte específica."""
+    common = (TEMPLATES_DIR / "markov_common.groovy").read_text(encoding="utf-8")
+    # El JSON va dentro de un string '''...''' de Groovy: hay que escapar las barras
+    embedded = model_json.replace("\\", "\\\\").replace("'''", "\\'\\'\\'")
+    return common.replace("__MODEL_JSON__", embedded) + (TEMPLATES_DIR / script).read_text(encoding="utf-8")
+
+
 def generate_jmx(
-    markov_matrix: Dict[str, Dict[str, float]],
+    model: dict,
+    think_times: Dict[str, Dict[str, List[int]]],
     profile: Dict[str, int],
     output_path: str,
     host: str = "localhost",
     port: int = 8080,
-    min_probability: float = 0.1,
 ) -> None:
     """Escribe el .jmx. host y port se pueden sobrescribir al lanzar JMeter (-Jhost= -Jport=)."""
-    samplers = build_samplers(markov_matrix, min_probability)
+    samplers = build_samplers(model["states"])
     # Cada {param} de las rutas se declara como variable del plan (valor por defecto 1)
     path_variables = sorted({name for s in samplers for name in s["params"]})
+    model_json = json.dumps({**model, "think_time_ms": think_times}, ensure_ascii=False, separators=(",", ":"))
 
     env = Environment(
         loader=FileSystemLoader(TEMPLATES_DIR),
@@ -62,6 +76,8 @@ def generate_jmx(
         port=port,
         samplers=samplers,
         path_variables=path_variables,
+        session_start_script=_groovy("session_start.groovy", model_json),
+        next_request_script=_groovy("next_request.groovy", model_json),
     )
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     Path(output_path).write_text(rendered, encoding="utf-8")
