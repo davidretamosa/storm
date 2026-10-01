@@ -1,0 +1,40 @@
+"""Orquestador de 2-processing: logs (+ .jar) -> modelo de tráfico -> plan .jmx.
+
+Uso (desde src/2-processing):
+    python main.py samples/access_sample.log
+    python main.py logs/access.log --output output/plan.jmx --host bankapp --port 8080
+"""
+import argparse
+
+from jmx_generator.generator import generate_jmx
+from log_parser.parser import parse_logs
+from traffic_model.markov import build_markov_matrix
+from traffic_model.scaling import predict_traffic_scale
+
+
+def main() -> None:
+    args = argparse.ArgumentParser(description="Genera un plan de JMeter a partir de logs de acceso.")
+    args.add_argument("log_file", help="access.log de la aplicación objetivo")
+    args.add_argument("--output", default="output/generated_scenario.jmx", help="ruta del .jmx generado")
+    args.add_argument("--host", default="localhost", help="host de la aplicación objetivo")
+    args.add_argument("--port", type=int, default=8080, help="puerto de la aplicación objetivo")
+    args.add_argument("--min-probability", type=float, default=0.1, help="descarta transiciones menos probables")
+    opts = args.parse_args()
+
+    print("--- 1. PARSING ---")
+    df_logs = parse_logs(opts.log_file)
+    print(f"{len(df_logs)} peticiones, {df_logs['session_id'].nunique()} sesiones.")
+    # TODO: jar_parser (endpoints declarados en el .jar)
+
+    print("--- 2. MODELADO DEL TRÁFICO ---")
+    markov_matrix = build_markov_matrix(df_logs)
+    profile = predict_traffic_scale(df_logs)
+    print(f"{len(markov_matrix)} estados en la cadena de Markov; {profile['vusers']} usuarios virtuales.")
+
+    print("--- 3. GENERACIÓN DEL ESCENARIO ---")
+    generate_jmx(markov_matrix, profile, opts.output, opts.host, opts.port, opts.min_probability)
+    print(f"Plan generado: {opts.output}")
+
+
+if __name__ == "__main__":
+    main()

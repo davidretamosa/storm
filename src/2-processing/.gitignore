@@ -1,0 +1,4 @@
+# El .gitignore de la raíz ignora *.log; el log de ejemplo sí se versiona
+!samples/*.log
+# Salidas generadas por main.py
+output/
