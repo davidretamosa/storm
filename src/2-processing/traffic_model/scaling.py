@@ -3,6 +3,8 @@ from typing import Dict
 
 import pandas as pd
 
+DEFAULT_VUSERS = 10
+
 
 def predict_traffic_scale(
     df: pd.DataFrame,
@@ -14,9 +16,13 @@ def predict_traffic_scale(
 
     Heurística provisional del código base: proyecta un +50 % de tráfico.
     """
-    unique_sessions = df["session_id"].nunique() if "session_id" in df else 0
+    if df is None or df.empty or "session_id" not in df:
+        # Sin logs no hay datos de cuánta gente la usa: valor por defecto, se cambia con -Jvusers
+        vusers = DEFAULT_VUSERS
+    else:
+        vusers = max(1, int(df["session_id"].nunique() * growth_factor))
     return {
-        "vusers": max(1, int(unique_sessions * growth_factor)),
+        "vusers": vusers,
         "ramp_up_seconds": ramp_up_seconds,
         "duration_seconds": duration_seconds,
     }

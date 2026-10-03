@@ -3,11 +3,11 @@
 No es la app real: responde a todo con un JSON vacío (GET -> 200, POST -> 201). Sirve para:
   1. Ver en directo cada petición que envía JMeter (con su pausa, sus ids y su body).
   2. Al parar (Ctrl+C), comparar el % de cada petición recibida con el % que había en el log:
-     si el modelo funciona, deben parecerse.
+     si el modelo funciona, deben parecerse (sin log, solo se enseña el % recibido).
 
 Uso (desde src/2-processing):
-    .venv/Scripts/python.exe tools/demo_server.py --log samples/access_sample.log
-    .venv/Scripts/python.exe tools/demo_server.py --stop-after 70     (se para solo a los 70 s)
+    .venv/Scripts/python.exe tools/demo_server.py --logs samples/access_sample.log --jar samples/demo-bankapp.jar
+    añadir --stop-after 70 para que se pare solo a los 70 s (si no, Ctrl+C)
 Y en otra terminal, JMeter contra http://localhost:8080 (ver DEMO.md).
 """
 import argparse
@@ -22,6 +22,7 @@ from pathlib import Path
 
 # Para importar log_parser al ejecutarlo como script
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from jar_parser.parser import parse_jar  # noqa: E402
 from log_parser.parser import parse_logs  # noqa: E402
 
 received = Counter()
@@ -70,14 +71,16 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def print_summary(df):
-    """Tabla: % de cada petición en el log vs % recibido de JMeter."""
-    in_log = (df["method"] + " " + df["endpoint"]).value_counts(normalize=True)
+    """Tabla: % de cada petición en el log (si hay) vs % recibido de JMeter."""
+    in_log = {}
+    if df is not None:
+        in_log = (df["method"] + " " + df["endpoint"]).value_counts(normalize=True).to_dict()
     total = sum(received.values())
     print("\n" + "=" * 78)
     print(f"RESUMEN: {total} peticiones recibidas de JMeter")
     print("=" * 78)
-    print(f"{'Petición':48} {'% en el log':>12} {'% recibido':>12}")
-    for key in sorted(set(in_log.index) | set(received)):
+    print(f"{'Petición':48} {'% en el log':>12} {'% recibido':>12}")  # sin log: 0.0% en el log
+    for key in sorted(set(in_log) | set(received)):
         log_pct = in_log.get(key, 0) * 100
         received_pct = received[key] / total * 100 if total else 0
         print(f"{key:48} {log_pct:11.1f}% {received_pct:11.1f}%")
@@ -85,14 +88,18 @@ def print_summary(df):
 
 def main():
     args = argparse.ArgumentParser(description="Servidor de prueba para la demo (hace de app del banco).")
-    args.add_argument("--log", default="samples/access_sample.log", help="log con el que se generó el .jmx")
+    args.add_argument("--logs", help="log con el que se generó el .jmx (para comparar los %%)")
+    args.add_argument("--jar", help=".jar con el que se generó el .jmx (para reconocer sus endpoints)")
     args.add_argument("--port", type=int, default=8080)
     args.add_argument("--stop-after", type=int, help="parar solo tras estos segundos (si no, Ctrl+C)")
     opts = args.parse_args()
 
-    df = parse_logs(opts.log)
+    df = parse_logs(opts.logs) if opts.logs else None
+    known = set(df["endpoint"]) if df is not None else set()
+    if opts.jar:
+        known |= {e["endpoint"] for e in parse_jar(opts.jar)}
     # Los más largos primero, para que /api/accounts/{id}/deposit no se confunda con /api/accounts/{id}
-    Handler.endpoints = sorted(set(df["endpoint"]), key=len, reverse=True)
+    Handler.endpoints = sorted(known, key=len, reverse=True)
 
     server = ThreadingHTTPServer(("127.0.0.1", opts.port), Handler)
     print(f"Servidor de prueba escuchando en http://localhost:{opts.port}  (Ctrl+C para parar y ver el resumen)")

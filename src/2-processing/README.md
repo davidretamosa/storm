@@ -1,13 +1,14 @@
 # 2-processing — Orquestador de IA
 
-Aprende **cómo usan los usuarios la aplicación** a partir de sus logs y genera un plan de JMeter (`.jmx`) que **simula ese mismo tráfico**: las mismas secuencias de peticiones, con las mismas pausas y datos parecidos.
+Genera un plan de JMeter (`.jmx`) que **simula usuarios** de una aplicación, a partir de **sus logs** (cómo la usa la gente), de **su `.jar`** (qué endpoints y bodies existen) **o de los dos combinados**. Así funciona tanto con apps con tráfico como con apps sin logs.
 
 ```
                       PASO 1: leer              PASO 2: aprender (la "IA")          PASO 3: generar
-access.log ──► log_parser ──► tabla ──► traffic_model ──► modelo ──► jmx_generator ──► plan .jmx
-                                 │      (Markov, pausas,                                  │
-.jar (opcional) ──► jar_parser ──┘       ids, bodies, usuarios)                    lo ejecuta JMeter
-                    (endpoints que existen)                                      (3-execution)
+access.log ──► log_parser ──► tabla ─────┐
+(opcional)                                ├──► traffic_model ──► modelo ──► jmx_generator ──► plan .jmx
+.jar ───────► jar_parser ──► endpoints ───┘    (Markov, pausas,                                 │
+(opcional)                                       ids, bodies, usuarios)                  lo ejecuta JMeter
+                                                                                         (3-execution)
 ```
 
 > 📘 **Para entender el código a fondo y ver las decisiones pendientes, leed [`GUIA.md`](GUIA.md).**
@@ -22,21 +23,29 @@ Todo se lanza con `main.py`. Esta carpeta **no depende de las demás** (`1-input
 
 ```bash
 cd src/2-processing
-.venv/Scripts/python.exe main.py samples/access_sample.log --jar samples/demo-bankapp.jar
+.venv/Scripts/python.exe main.py --logs samples/access_sample.log --jar samples/demo-bankapp.jar
 ```
 
 Salida:
 
 ```
---- 1. PARSING ---
-95 peticiones, 30 sesiones.
-12 endpoints en el .jar.
-  - Nunca usado en los logs (no se probará): DELETE /api/accounts/{id}
+--- 1. LECTURA ---
+Logs: 95 peticiones, 30 sesiones.
+.jar: 12 endpoints.
+  - Nunca usado en los logs (se probará poco, por el .jar): DELETE /api/accounts/{id}
 --- 2. MODELADO DEL TRÁFICO ---
-11 estados en la cadena de Markov; 45 usuarios virtuales.
+12 estados en la cadena de Markov; 45 usuarios virtuales.
 6 peticiones con parámetros de ruta; 5 con cuerpo JSON.
 --- 3. GENERACIÓN DEL ESCENARIO ---
 Plan generado: output/generated_scenario.jmx
+```
+
+Las tres formas de usarlo:
+
+```bash
+.venv/Scripts/python.exe main.py --logs samples/access_sample.log                                  # solo logs
+.venv/Scripts/python.exe main.py --jar samples/demo-bankapp.jar                                    # solo .jar (app sin logs)
+.venv/Scripts/python.exe main.py --logs samples/access_sample.log --jar samples/demo-bankapp.jar   # combinado
 ```
 
 El `.jmx` generado se puede abrir con JMeter (*File → Open*) para ver la estructura del plan.
@@ -116,8 +125,11 @@ Lee las opciones de la terminal y ejecuta los 3 pasos. No calcula nada: solo lla
 
 | Opción | Por defecto | Para qué |
 |---|---|---|
-| `log_file` | (obligatoria) | El log a analizar |
-| `--jar` | — | `.jar` de la app, para descubrir todos sus endpoints |
+| `--logs` | — | El log de la app (cómo la usa la gente) |
+| `--jar` | — | El `.jar` de la app (qué endpoints y bodies existen) |
+| | | **Hace falta al menos uno de los dos** |
+| `--jar-weight` | `1` | Cuánto pesa el `.jar` al mezclarlo con los logs: `1` = como una sesión más (ver sección 5) |
+| `--default-pause` | `1-3` | Pausa en segundos (al azar en ese rango) cuando no hay datos en los logs. `0-0` = sin pausa |
 | `--output` | `output/generated_scenario.jmx` | Dónde se guarda el plan |
 | `--host`, `--port` | `localhost`, `8080` | Contra qué servidor lanzará JMeter las peticiones |
 
@@ -166,7 +178,7 @@ Cada archivo aprende **una cosa distinta** de la misma tabla:
 | Función | Qué hace |
 |---|---|
 | `get_steps(tabla)` | Añade a la tabla `key` (`"GET /api/accounts/{id}"`) y `next_key` (lo siguiente que hizo **ese mismo usuario**, con `groupby("session_id")` + `shift(-1)`). La usa también `think_time.py` |
-| `build_markov_model(tabla)` | Cuenta las parejas actual → siguiente con `pd.crosstab` y las pasa a probabilidades. Devuelve `{"states", "start", "transitions", "max_steps"}` |
+| `build_markov_model(tabla, endpoints=...)` | Junta logs y `.jar`: `count_from_logs` cuenta las parejas actual → siguiente con `pd.crosstab` y `mix` les suma el prior del `.jar` y las pasa a probabilidades. Devuelve `{"states", "start", "transitions", "max_steps"}` |
 | `table_to_dict(tabla)` | Pasa la tabla de probabilidades a diccionario `{actual: {siguiente: probabilidad}}` |
 | `prune(...)` | **Opcional**: quita opciones poco probables (solo con `--min-probability`) |
 
@@ -239,19 +251,35 @@ El `access.log` de la app del banco (`1-input/java-app-mock`): **JSON Lines, una
 
 ---
 
-## 5. `jar_parser` y su relación con el modelo
+## 5. Cómo se combinan logs y `.jar`
 
-**Qué aporta.** Los logs solo muestran **lo que la gente ha usado**; el `.jar` muestra **todo lo que existe**. Con la demo, el `jar_parser` encuentra `DELETE /api/accounts/{id}`, que nadie ha usado en los logs.
+Versión **sencilla** (lo que pidió ITNow): cada fuente aporta lo que sabe.
 
-**Qué hace ahora mismo: solo informa.** `main.py` enseña qué endpoints del `.jar` no aparecen en los logs (y al revés). **El modelo y el `.jmx` siguen saliendo solo de los logs**, igual que sin `--jar`.
+| | Los logs dicen… | El `.jar` dice… |
+|---|---|---|
+| Qué peticiones hay | Las que se usan | **Todas** las que existen |
+| Qué sigue a cada petición | **Probabilidades reales** | Nada → "cualquiera, por igual" |
+| Body | **Valores reales** | **Campos y tipos** del DTO |
+| Pausas | **Pausas reales** | Nada → 1–3 s por defecto |
 
-**Pendiente de decidir entre todos** (por eso aún no está hecho):
+**Probabilidades (el "prior").** El `.jar` aporta unas pocas **observaciones inventadas**, repartidas por igual entre todas las peticiones posibles, que se suman a los conteos de los logs:
 
-1. **Endpoints que existen pero nadie usa** (como el `DELETE`). La cadena de Markov solo conoce lo que ha visto en los logs, así que el `.jmx` nunca los probará. Opciones:
-   - a) Dejarlo así: simulamos el tráfico **real**, y lo que nadie usa no se prueba.
-   - b) Meterlos en la cadena con una probabilidad pequeña (p. ej. 1 %), aunque nadie los haya usado.
-   - c) Un grupo de usuarios aparte en el `.jmx` que llama a **todos** los endpoints del `.jar`, para comprobar que funcionan.
-2. **Bodies que no salen en los logs.** `payloads.py` aprende cómo es el body de una petición **mirando los bodies del log**. Si en el log no hay ningún body de esa petición (nunca se ha usado, o la app no lo guardó), JMeter la enviaría **sin body** y la app respondería con error. Con el `jar_parser` sabemos sus campos (`DepositRequest` → `amount: BigDecimal`), así que se podría generar un body de prueba (`{"amount": 100.00}`).
+```
+probabilidad = (veces en los logs + parte inventada) / (total en los logs + jar_weight)
+```
+
+- **Solo `.jar`** (app sin logs): solo hay inventadas → todo igual de probable → se recorre toda la API.
+- **Muchos logs:** las inventadas no se notan → mandan los logs (el tráfico real).
+- **Endpoint que nadie usa** (el `DELETE` de la demo): sale con probabilidad pequeña (≈0,3 % con `jar_weight=1`) → se prueba un poco.
+- **Solo logs:** exactamente igual que antes.
+
+**Bodies.** Si la petición tiene bodies en los logs, **mandan los logs**. Si no tiene ninguno, se genera desde su DTO con un valor por tipo: números 1–100, ids `1`, textos `"test"`, booleanos `true`/`false`, fechas fijas.
+
+**Valores por defecto (solo cuando no hay datos).** Son **suposiciones**, no datos de la app, y se pueden cambiar:
+- Pausa: al azar entre **1 y 3 s** (habitual en pruebas de carga: el tiempo de mirar una pantalla y hacer clic). Opción `--default-pause`.
+- Usuarios virtuales: **10**. Se cambia al lanzar JMeter con `-Jvusers=...`.
+
+Más detalle y lo que se ha dejado fuera a propósito: `GUIA.md`, sección 6.
 
 ---
 

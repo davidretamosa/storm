@@ -64,19 +64,19 @@ Mencionad también el `.jar` de prueba: *"Además leemos el `.jar` compilado de 
 En la terminal 1:
 
 ```bash
-.venv/Scripts/python.exe main.py samples/access_sample.log --jar samples/demo-bankapp.jar
+.venv/Scripts/python.exe main.py --logs samples/access_sample.log --jar samples/demo-bankapp.jar
 ```
 
 Salida esperada y qué decir de cada línea:
 
 ```
---- 1. PARSING ---
-95 peticiones, 30 sesiones.                         ← "hemos leído el log"
-12 endpoints en el .jar.                            ← "la app tiene 12 endpoints"
-  - Nunca usado en los logs (no se probará): DELETE /api/accounts/{id}
-                                                    ← "y detectamos uno que nadie usa: cobertura"
+--- 1. LECTURA ---
+Logs: 95 peticiones, 30 sesiones.                   ← "hemos leído el log"
+.jar: 12 endpoints.                                 ← "la app tiene 12 endpoints"
+  - Nunca usado en los logs (se probará poco, por el .jar): DELETE /api/accounts/{id}
+                                                    ← "uno que nadie usa: gracias al .jar también se prueba, un poco"
 --- 2. MODELADO DEL TRÁFICO ---
-11 estados en la cadena de Markov; 45 usuarios virtuales.
+12 estados en la cadena de Markov; 45 usuarios virtuales.
                                                     ← "el modelo: qué hace cada usuario después de cada paso"
 6 peticiones con parámetros de ruta; 5 con cuerpo JSON.
                                                     ← "también aprende los ids y los datos que envían"
@@ -84,7 +84,17 @@ Salida esperada y qué decir de cada línea:
 Plan generado: output/generated_scenario.jmx       ← "y genera el plan de JMeter"
 ```
 
-Si da tiempo, enseñad en `markov.py` la línea de `pd.crosstab`: *"esta línea es la cadena de Markov: cuenta qué petición sigue a cuál y lo convierte en probabilidades"*. Por ejemplo: después de ver una cuenta, el 32 % mira los movimientos, el 25 % ingresa, el 21 % saca dinero, el 18 % transfiere y el 4 % se va.
+**Lo importante: logs y `.jar` combinados.** Generad también el plan **solo con el `.jar`** (una app "muerta", sin logs):
+
+```bash
+.venv/Scripts/python.exe main.py --jar samples/demo-bankapp.jar
+```
+
+> *"Sin logs también funciona: el `.jar` dice qué endpoints y qué bodies existen, y el plan recorre toda la API. Cuando hay logs, mandan los logs; el `.jar` solo completa lo que falta."*
+
+Para el resto de la demo, volved a generar el plan combinado (el comando de arriba con `--logs` y `--jar`).
+
+Si da tiempo, enseñad en `markov.py` la línea de `pd.crosstab` y la función `mix`: *"crosstab cuenta qué petición sigue a cuál en los logs, y mix le suma lo que aporta el .jar y lo convierte en probabilidades: esa es la cadena de Markov"*. Por ejemplo: después de ver una cuenta, el 32 % mira los movimientos, el 25 % ingresa, el 21 % saca dinero, el 18 % transfiere y el 4 % se va.
 
 ### Paso 4 — El plan en JMeter (2 min)
 
@@ -108,7 +118,7 @@ STORM - plan generado
 **Terminal 2** — el servidor de prueba (hace de app del banco y se para solo a los 70 s):
 
 ```bash
-.venv/Scripts/python.exe tools/demo_server.py --stop-after 70
+.venv/Scripts/python.exe tools/demo_server.py --logs samples/access_sample.log --jar samples/demo-bankapp.jar --stop-after 70
 ```
 
 **Terminal 1** — JMeter sin interfaz, 10 usuarios durante 60 segundos (cambiad `C:\jmeter\...` por vuestra ruta):
@@ -139,7 +149,7 @@ GET /api/users/{id}                                     21.1%        25.8%
 ...
 ```
 
-> *"El tráfico que genera JMeter tiene las mismas proporciones que el tráfico real del log. Con más usuarios y más tiempo, se parecen todavía más."*
+> *"El tráfico que genera JMeter tiene las mismas proporciones que el tráfico real del log (el `DELETE`, que nadie usa, sale muy poco: lo añade el `.jar`). Con más usuarios y más tiempo, se parecen todavía más."*
 
 ### Paso 6 — Siguientes pasos (1 min)
 
@@ -166,7 +176,8 @@ GET /api/users/{id}                                     21.1%        25.8%
 | Pregunta | Respuesta |
 |---|---|
 | *¿Dónde está la IA?* | El modelo se **aprende de los datos**: una cadena de Markov de la navegación, más distribuciones de pausas y de datos. No hay reglas escritas a mano. (Ver decisión D8 de `GUIA.md` para mejoras con ML.) |
-| *¿Qué pasa con endpoints que nadie usa?* | El `jar_parser` los detecta. Decidir si probarlos es una de las decisiones pendientes (D2). |
+| *¿Qué pasa con endpoints que nadie usa?* | El `jar_parser` los descubre y se prueban un poco: el `.jar` aporta unas pocas "observaciones inventadas" a la cadena de Markov. |
+| *¿Y si la app no tiene logs?* | Se genera el plan solo con el `.jar`: recorre todos los endpoints, con bodies a partir de los DTOs y pausas de 1–3 s. |
 | *¿Funciona con logs reales?* | Sí, con el formato JSON acordado con el grupo de input. Solo hay que cambiar el archivo de entrada. |
 | *¿Cuánta carga puede generar?* | La que se configure: `-Jvusers=...` y `-Jduration=...`. En Kubernetes se reparte entre varios JMeter (grupo de execution). |
 | *¿Por qué Markov y no una lista fija de peticiones?* | Una lista fija repite siempre lo mismo. Con Markov cada sesión es distinta, pero en conjunto respetan las proporciones reales (lo que muestra el resumen del paso 5). |
