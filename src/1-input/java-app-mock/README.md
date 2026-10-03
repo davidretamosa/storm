@@ -142,14 +142,47 @@ Los logs se generan en formato **JSON estructurado**, pensados para ser consumid
 ```json
 {
   "timestamp": "2026-10-01T11:42:35.123Z",
-  "method": "POST",
-  "endpoint": "/api/transfers",
-  "statusCode": 200,
-  "responseTimeMs": 45,
+  "requestId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "sessionId": "sess-9f8e7d6c",
   "userId": 12,
+  "method": "POST",
+  "endpoint": "/api/accounts/{id}/deposit",
+  "path": "/api/accounts/3/deposit",
+  "status": 200,
+  "durationMs": 45,
   "requestSizeBytes": 128,
-  "responseSizeBytes": 256
+  "responseSizeBytes": 256,
+  "body": {
+    "acountId": 3,
+    "receptorID": 5,
+    "amount": 200.00,
+    "concept": "alquiler"
+  }
 }
+```
+
+El campo body simplemente refleja lo que el cliente envió en esa petición concreta — no tiene una estructura fija, varía según qué endpoint se llamó.
+
+Ejemplos:
+
+``POST /api/users`` 
+```json
+"body": {
+  "name": "Laura Martínez",
+  "email": "laura@example.com"
+}
+```
+``POST /api/accounts/{id}/deposit``
+
+```json
+"body": {
+  "amount": 200.00
+}
+```
+
+``GET /api/accounts/3`` Todos los get:
+```json
+"body": null
 ```
 
 ## Notas
