@@ -11,6 +11,8 @@ access.log ──► log_parser ──► tabla ──► traffic_model ──�
 ```
 
 > 📘 **Para entender el código a fondo y ver las decisiones pendientes, leed [`GUIA.md`](GUIA.md).**
+>
+> 🎤 **Para preparar y hacer la demo a la empresa, leed [`DEMO.md`](DEMO.md).**
 
 Todo se lanza con `main.py`. Esta carpeta **no depende de las demás** (`1-input`, `3-execution`): en `samples/` hay datos de prueba para ejecutarla sola.
 
@@ -100,6 +102,9 @@ Tests:
 │   ├── demo-bankapp.jar
 │   └── demo_app/
 │
+├── tools/                   SOLO PARA LA DEMO
+│   └── demo_server.py
+│
 └── tests/                   comprueban que cada parte funciona
 ```
 
@@ -115,6 +120,8 @@ Lee las opciones de la terminal y ejecuta los 3 pasos. No calcula nada: solo lla
 | `--jar` | — | `.jar` de la app, para descubrir todos sus endpoints |
 | `--output` | `output/generated_scenario.jmx` | Dónde se guarda el plan |
 | `--host`, `--port` | `localhost`, `8080` | Contra qué servidor lanzará JMeter las peticiones |
+
+Al lanzar JMeter se pueden cambiar sin regenerar el plan: `-Jhost=... -Jport=...` (servidor) y `-Jvusers=... -Jrampup=... -Jduration=...` (usuarios virtuales, rampa y duración en segundos).
 | `--min-probability` | `0` (no quita nada) | Opcional: ignorar los caminos muy poco frecuentes |
 | `--max-steps` | `50` | Máximo de peticiones por sesión simulada (por si hay bucles) |
 
@@ -179,6 +186,10 @@ Cada archivo aprende **una cosa distinta** de la misma tabla:
 | `demo-bankapp.jar` | `.jar` **de prueba** para el `jar_parser`: los 11 endpoints de la API + `DELETE /api/accounts/{id}` (que no sale en los logs, para ver que se detecta) |
 | `demo_app/src/` | El código Java de ese `.jar` (controllers y DTOs que **no hacen nada**) |
 | `demo_app/build_demo_jar.py` | Vuelve a generar `demo-bankapp.jar` si se cambia el código Java (necesita el JDK; el `.jar` ya está en el repo) |
+
+### `tools/demo_server.py` — servidor de prueba para la demo
+
+Hace de "app del banco" para recibir el tráfico de JMeter: responde a todo, enseña cada petición en directo y, al parar, compara el % de cada petición recibida con el % del log. **No es la app real.** Cómo usarlo: [`DEMO.md`](DEMO.md).
 
 ### `tests/`
 

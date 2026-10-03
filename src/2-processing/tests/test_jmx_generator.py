@@ -33,8 +33,10 @@ def prop(element, name):
 def test_valid_xml_with_loop_controller(tmp_path):
     root = render(tmp_path)
     group = root.find(".//ThreadGroup")
-    assert prop(group, "ThreadGroup.num_threads") == "10"
-    assert prop(group, "ThreadGroup.duration") == "120"
+    # Se pueden cambiar al lanzar JMeter: -Jvusers=... -Jrampup=... -Jduration=...
+    assert prop(group, "ThreadGroup.num_threads") == "${__P(vusers,10)}"
+    assert prop(group, "ThreadGroup.ramp_time") == "${__P(rampup,30)}"
+    assert prop(group, "ThreadGroup.duration") == "${__P(duration,120)}"
     assert group.find("elementProp[@name='ThreadGroup.main_controller']") is not None
 
 

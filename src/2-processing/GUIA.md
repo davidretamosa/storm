@@ -179,7 +179,13 @@ Para cada archivo: **qué hay que entender sí o sí** y **preguntas para compro
 
 ❓ *Con la demo, ¿qué endpoint sale como "nunca usado" y por qué?*
 
-### 3.10 `tests/`
+### 3.10 `tools/demo_server.py` — solo para la demo
+
+- Servidor de prueba que hace de "app del banco": responde a todo y enseña en directo cada petición de JMeter.
+- Al parar, compara el % de cada petición recibida con el % del log: **es la prueba de que el modelo reproduce el tráfico real**.
+- Cómo hacer la demo: [`DEMO.md`](DEMO.md).
+
+### 3.11 `tests/`
 
 - `pytest` ejecuta todos los `test_*.py`. Tienen que pasar **siempre** antes de subir código.
 - Cada test es un ejemplo pequeño de cómo se usa una función: si no entiendes una función, lee su test.
@@ -196,6 +202,17 @@ Para cada archivo: **qué hay que entender sí o sí** y **preguntas para compro
 | `--jar` | no se usa | Lee el `.jar` y dice qué endpoints no salen en los logs. **No cambia el `.jmx`** | Para ver la cobertura de la API |
 | `--output` | `output/generated_scenario.jmx` | Dónde se guarda el plan | Si queréis varios planes |
 | `--host`, `--port` | `localhost`, `8080` | A qué servidor atacará JMeter. Se puede cambiar también al lanzar JMeter: `-Jhost=... -Jport=...` | Cuando se sepa dónde está la app en Kubernetes |
+
+### Opciones al lanzar JMeter (sin regenerar el `.jmx`)
+
+| Opción | Por defecto | Qué hace |
+|---|---|---|
+| `-Jhost=...`, `-Jport=...` | Los de `main.py` | Servidor al que se envían las peticiones |
+| `-Jvusers=...` | El de `scaling.py` (45 con la demo) | Usuarios virtuales |
+| `-Jrampup=...` | 60 | Segundos para arrancar a todos los usuarios |
+| `-Jduration=...` | 300 | Duración de la prueba en segundos |
+
+Ejemplo (demo corta): `jmeter -n -t output/generated_scenario.jmx -Jvusers=10 -Jduration=60`
 | `--min-probability` | `0` | Quita las transiciones con menos probabilidad que este valor y reparte su % entre las demás. **Con 0 no quita nada** | Solo si el plan tiene caminos rarísimos que no interesa probar (p. ej. `0.05` = quitar lo que pase menos del 5 %) |
 | `--max-steps` | `50` | Máximo de peticiones por sesión simulada. **No se usa en Python**: viaja dentro del `.jmx` y lo aplica JMeter | Casi nunca. Es una protección por si la cadena tiene bucles (p. ej. retirada → retirada → retirada…) |
 

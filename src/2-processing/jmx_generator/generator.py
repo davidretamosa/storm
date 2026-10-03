@@ -64,7 +64,11 @@ def generate_jmx(
     path_params: Optional[dict] = None,
     bodies: Optional[dict] = None,
 ) -> None:
-    """Escribe el .jmx. host y port se pueden sobrescribir al lanzar JMeter (-Jhost= -Jport=)."""
+    """Escribe el .jmx.
+
+    Al lanzar JMeter se pueden cambiar sin regenerar el plan: -Jhost= -Jport= (servidor)
+    y -Jvusers= -Jrampup= -Jduration= (usuarios virtuales, rampa y duración en segundos).
+    """
     path_params = path_params or {}
     bodies = bodies or {}
     samplers = build_samplers(model["states"], bodies)
