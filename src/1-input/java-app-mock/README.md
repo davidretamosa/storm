@@ -137,13 +137,20 @@ La app arranca en `http://localhost:8080`. Consola H2 disponible en `http://loca
 
 ## Logging
 
-Los logs se generan en formato **JSON estructurado**, pensados para ser consumidos por el módulo de análisis (`ai-orchestrator/`). Cada entrada registrará como mínimo:
+Los logs se generan en formato **JSON estructurado**, pensados para ser consumidos por el módulo de análisis (`ai-orchestrator/`). Cada entrada registrará:
 
-- timestamp
-- endpoint y método HTTP
-- código de estado
-- tiempo de respuesta
-- (opcional) identificador de usuario/sesión simulado
+```json
+{
+  "timestamp": "2026-10-01T11:42:35.123Z",
+  "method": "POST",
+  "endpoint": "/api/transfers",
+  "statusCode": 200,
+  "responseTimeMs": 45,
+  "userId": 12,
+  "requestSizeBytes": 128,
+  "responseSizeBytes": 256
+}
+```
 
 ## Notas
 
