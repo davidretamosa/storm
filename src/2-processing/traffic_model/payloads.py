@@ -40,7 +40,7 @@ def _template_regex(endpoint: str) -> re.Pattern:
 
 
 def build_path_params(df: pd.DataFrame) -> Dict[str, Dict[str, List[list]]]:
-    """Por cada petición con {parámetros}, los valores vistos en 'ruta' y su frecuencia.
+    """Por cada petición con {parámetros}, los valores vistos en la columna 'path' y su frecuencia.
 
     Un parámetro sin valores observados queda como lista vacía (JMeter usará 1).
     """

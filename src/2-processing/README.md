@@ -10,6 +10,8 @@ access.log ──► log_parser ──► tabla ──► traffic_model ──�
                     (endpoints que existen)                                      (3-execution)
 ```
 
+> 📘 **Para entender el código a fondo y ver las decisiones pendientes, leed [`GUIA.md`](GUIA.md).**
+
 Todo se lanza con `main.py`. Esta carpeta **no depende de las demás** (`1-input`, `3-execution`): en `samples/` hay datos de prueba para ejecutarla sola.
 
 ---
