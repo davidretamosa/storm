@@ -14,6 +14,7 @@ def test_typed_columns(log_file):
     row = df.iloc[3]
     assert (row["method"], row["endpoint"], row["path"]) == ("POST", "/api/transfers", "/api/transfers")
     assert (row["status"], row["duration_ms"], row["user_id"]) == (201, 40, 2)
+    assert (row["request_size_bytes"], row["response_size_bytes"]) == (0, 100)
     assert df["timestamp"].is_monotonic_increasing
     assert str(df["timestamp"].dt.tz) == "UTC"
 

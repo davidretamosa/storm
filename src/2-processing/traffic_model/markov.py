@@ -1,77 +1,109 @@
-"""Cadena de Markov de la navegación: qué petición sigue a cuál dentro de una sesión."""
-from typing import Dict, List
+"""Cadena de Markov de la navegación: qué petición sigue a cuál dentro de una sesión.
 
+Ejemplo: si en los logs, después de "GET /api/accounts/{id}", 6 veces viene una
+transferencia y 4 veces se consultan los movimientos, la probabilidad de cada una
+es 0.6 y 0.4. JMeter usará esas probabilidades para decidir qué hace cada usuario.
+
+La función que usa main.py es build_markov_model(). Las demás son piezas suyas
+(get_steps también la usa think_time.py).
+"""
 import pandas as pd
 
 # Estado final: la sesión termina después de la petición actual
 END = "END"
 
 
-def request_key(method: str, endpoint: str) -> str:
-    """Identificador de un estado de la cadena, p. ej. 'GET /api/accounts/{id}'."""
-    return f"{method} {endpoint}"
+def get_steps(df):
+    """Tabla de peticiones con sesión, ordenada por tiempo, con dos columnas nuevas:
 
-
-def session_steps(df: pd.DataFrame) -> pd.DataFrame:
-    """Peticiones con sesión, ordenadas por tiempo, con su estado ('key') y el siguiente ('next_key')."""
-    if "session_id" not in df or df["session_id"].isna().all():
+    - key:      nombre de la petición, p. ej. "GET /api/accounts/{id}"
+    - next_key: la siguiente petición de la MISMA sesión (vacía en la última)
+    """
+    if "session_id" not in df.columns or df["session_id"].isna().all():
         raise ValueError(
             "Los logs no tienen el campo 'sessionId': sin él no se pueden reconstruir "
             "las secuencias de navegación (ver README)."
         )
 
-    steps = df.dropna(subset=["session_id"]).sort_values("timestamp", kind="stable").copy()
+    # Solo las peticiones con sesión, en orden de tiempo
+    steps = df.dropna(subset=["session_id"])
+    steps = steps.sort_values("timestamp", kind="stable").copy()
+
+    # "GET" + " " + "/api/accounts/{id}"
     steps["key"] = steps["method"] + " " + steps["endpoint"]
+
+    # groupby("session_id"): cada sesión por separado
+    # shift(-1): el valor de la fila de abajo (la siguiente petición de esa sesión)
     steps["next_key"] = steps.groupby("session_id")["key"].shift(-1)
     return steps
 
 
-def _normalize(counts: pd.Series) -> Dict[str, float]:
-    return {key: float(n / counts.sum()) for key, n in counts.items() if n > 0}
+def table_to_dict(table):
+    """Tabla de probabilidades (filas = petición actual, columnas = siguiente)
+    -> {actual: {siguiente: probabilidad}}, sin las probabilidades 0."""
+    result = {}
+    for source, row in table.iterrows():
+        result[source] = {}
+        for target, probability in row.items():
+            if probability > 0:
+                result[source][target] = float(probability)
+    return result
 
 
-def build_markov_matrix(df: pd.DataFrame) -> Dict[str, Dict[str, float]]:
-    """Probabilidad de pasar de cada petición a la siguiente (cada fila suma 1)."""
-    # El último paso de cada sesión no tiene transición
-    transitions = session_steps(df).dropna(subset=["next_key"])
-    if transitions.empty:
-        return {}
+def prune(probabilities, min_probability):
+    """OPCIONAL: solo cambia algo si se ejecuta main.py con --min-probability (por defecto 0).
 
-    return {
-        source: _normalize(group["next_key"].value_counts(sort=False))
-        for source, group in transitions.groupby("key")
-    }
+    Quita las opciones menos probables que min_probability y reparte su probabilidad
+    entre las que quedan (para que sigan sumando 1). Si todas quedan por debajo, se
+    queda la más probable. Sirve para simplificar el plan quitando caminos muy raros.
+    """
+    kept = {}
+    for key, probability in probabilities.items():
+        if probability >= min_probability:
+            kept[key] = probability
 
-
-def _prune(distribution: Dict[str, float], min_probability: float) -> Dict[str, float]:
-    """Quita lo menos probable y renormaliza; si todo queda por debajo, se queda el más probable."""
-    kept = {k: p for k, p in distribution.items() if p >= min_probability}
     if not kept:
-        best = max(distribution, key=distribution.get)
-        kept = {best: distribution[best]}
+        best = max(probabilities, key=probabilities.get)
+        kept[best] = probabilities[best]
+
     total = sum(kept.values())
-    return {k: p / total for k, p in kept.items()}
+    result = {}
+    for key, probability in kept.items():
+        result[key] = probability / total
+    return result
 
 
-def build_markov_model(df: pd.DataFrame, min_probability: float = 0.0, max_steps: int = 50) -> dict:
+def build_markov_model(df, min_probability=0.0, max_steps=50):
     """Modelo completo de navegación para simular sesiones:
 
+    - states: todas las peticiones distintas (los estados de la cadena).
     - start: probabilidad de que una sesión empiece por cada petición.
     - transitions: probabilidad de la siguiente petición, incluido END (fin de sesión).
-    - max_steps: límite de peticiones por sesión, por si la cadena tiene bucles.
+    - max_steps: límite de peticiones por sesión. No se usa aquí: se guarda en el modelo
+      para que JMeter corte las sesiones que se alarguen demasiado (p. ej. por un bucle).
     """
-    steps = session_steps(df)
-    first = steps.groupby("session_id")["key"].first()
-    with_end = steps.assign(next_key=steps["next_key"].fillna(END))
+    steps = get_steps(df)
 
-    transitions = {
-        source: _prune(_normalize(group["next_key"].value_counts(sort=False)), min_probability)
-        for source, group in with_end.groupby("key")
-    }
-    states: List[str] = sorted(transitions)
+    # Cómo empiezan las sesiones: la primera petición de cada una, y con qué frecuencia
+    first_requests = steps.groupby("session_id")["key"].first()
+    start = first_requests.value_counts(normalize=True).to_dict()
+
+    # Después de la última petición de cada sesión viene END
+    steps["next_key"] = steps["next_key"].fillna(END)
+
+    # crosstab cuenta cuántas veces aparece cada pareja (actual, siguiente);
+    # normalize="index" divide cada fila entre su total -> probabilidades que suman 1
+    table = pd.crosstab(steps["key"], steps["next_key"], normalize="index")
+    transitions = table_to_dict(table)
+
+    # OPCIONAL: con min_probability=0 (por defecto) prune no quita nada
+    start = prune(start, min_probability)
+    for source in transitions:
+        transitions[source] = prune(transitions[source], min_probability)
+
     return {
-        "states": states,
-        "start": _prune(_normalize(first.value_counts(sort=False)), min_probability),
+        "states": sorted(transitions),
+        "start": start,
         "transitions": transitions,
         "max_steps": max_steps,
     }
