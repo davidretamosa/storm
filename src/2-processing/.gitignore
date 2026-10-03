@@ -2,3 +2,7 @@
 !samples/*.log
 # Salidas generadas por main.py
 output/
+# El .gitignore de la raíz ignora *.jar; el .jar de PRUEBA del jar_parser sí se versiona
+!samples/*.jar
+# Librerías que descarga samples/demo_app/build_demo_jar.py
+samples/demo_app/.libs/
