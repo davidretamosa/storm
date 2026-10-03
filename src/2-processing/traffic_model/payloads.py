@@ -7,7 +7,7 @@ import json
 import re
 from collections import Counter
 from decimal import Decimal
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import pandas as pd
 
@@ -76,14 +76,6 @@ def _field_model(name: str, values: list, presence: float) -> dict:
     return {"type": "choice", "values": _distribution(values), "presence": presence}
 
 
-def _parse_json(body: str) -> Optional[dict]:
-    try:
-        parsed = json.loads(body)
-    except (TypeError, ValueError):
-        return None
-    return parsed if isinstance(parsed, dict) else None
-
-
 def build_body_models(df: pd.DataFrame) -> Dict[str, Dict[str, dict]]:
     """Por cada petición con cuerpo JSON, un modelo por campo:
 
@@ -94,7 +86,7 @@ def build_body_models(df: pd.DataFrame) -> Dict[str, Dict[str, dict]]:
     result: Dict[str, Dict[str, dict]] = {}
     with_body = df.dropna(subset=["body"]) if "body" in df else df.iloc[0:0]
     for (method, endpoint), group in with_body.groupby(["method", "endpoint"]):
-        bodies = [b for b in map(_parse_json, group["body"]) if b is not None]
+        bodies = [b for b in group["body"] if isinstance(b, dict)]
         if not bodies:
             continue
         fields: Dict[str, list] = {}

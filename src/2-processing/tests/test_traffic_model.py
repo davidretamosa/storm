@@ -22,7 +22,7 @@ def test_markov_rows_sum_to_one(log_file):
 
 def test_markov_requires_session_field():
     df = pd.DataFrame({"timestamp": [1, 2], "method": ["GET"] * 2, "endpoint": ["/a", "/b"], "session_id": [None, None]})
-    with pytest.raises(ValueError, match="sesion"):
+    with pytest.raises(ValueError, match="sessionId"):
         build_markov_matrix(df)
 
 

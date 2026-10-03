@@ -15,7 +15,7 @@ access.log ──► log_parser ──► traffic_model ──► jmx_generator 
 | `traffic_model/` | `markov.py`: cadena de Markov de la navegación (cómo empiezan las sesiones, qué petición sigue a cuál y cuándo terminan). `think_time.py`: pausas observadas entre peticiones. `payloads.py`: valores de los `{parámetros}` de ruta y modelo de los cuerpos JSON. `scaling.py`: cuántos usuarios virtuales simular. | Primera versión |
 | `jmx_generator/` | Rellena la plantilla `templates/plan.jmx.j2` con el modelo: cada usuario virtual recorre la cadena de Markov (ver abajo). | Primera versión |
 | `main.py` | Encadena los pasos. | Hecho |
-| `samples/` | Log de ejemplo inventado (15 sesiones en la Bank App) para probar sin la app. | — |
+| `samples/` | Log de ejemplo inventado en el formato de la app del banco (30 sesiones, las 11 peticiones de la API) para probar sin la app. | — |
 | `tests/` | Tests de cada módulo. | — |
 
 Partimos del código base generado con Gemini (`codigo_gemini.py`), repartido en estas carpetas y corregido para que se ejecute.
@@ -37,15 +37,24 @@ El host y el puerto también se pueden cambiar al lanzar JMeter: `jmeter -n -t p
 
 ## Formato de log que espera
 
-El mismo que el `access.log` de la echo-api de `3-execution`, **más un campo `sesion=`**:
+El `access.log` de la app del banco (`1-input/java-app-mock`): **JSON Lines, una petición por línea**:
 
-```
-2026-10-01T09:01:20.485+02:00 INFO  [aa05b2715945] ACCESS - metodo=GET endpoint=/api/users/{id} ruta=/api/users/1 query=- estado=200 duracionMs=12 bytesEntrada=0 cliente=172.18.0.6 sesion=s05
+```json
+{"timestamp":"2026-10-01T11:42:35.123Z","requestId":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","sessionId":"sess-9f8e7d6c","userId":12,"method":"POST","endpoint":"/api/accounts/{id}/deposit","path":"/api/accounts/3/deposit","status":200,"durationMs":45,"requestSizeBytes":17,"responseSizeBytes":256,"body":{"amount":200.00}}
 ```
 
-- `endpoint` es la ruta con plantilla (`/api/users/{id}`), no la concreta; así todas las peticiones a usuarios cuentan como el mismo estado.
-- **`cuerpo` tiene que ser el último campo** de la línea (puede tener espacios). `-` = sin cuerpo; los recortados por la app (acaban en `...`) se ignoran.
-- **`sesion` es imprescindible**: el `[requestId]` cambia en cada petición, y sin un identificador de sesión/usuario no se pueden reconstruir las secuencias de navegación. Hay que acordarlo con quien implemente el `RequestLoggingFilter` de `java-app-mock` (p. ej. leyendo una cabecera `X-Session-Id`).
+| Campo | Uso |
+|---|---|
+| `timestamp` (UTC) | Orden de las peticiones y pausas entre ellas |
+| `sessionId` | **Imprescindible**: agrupa las peticiones de una misma visita (cadena de Markov) |
+| `method` + `endpoint` | Estado de la cadena. `endpoint` es la ruta con plantilla (`/api/accounts/{id}`) |
+| `path` | Ruta concreta (`/api/accounts/3`): de aquí salen los valores de los `{id}` |
+| `status`, `durationMs` | Errores y tiempos de respuesta |
+| `body` | Cuerpo JSON recibido (`null` si no hay): modelo de los cuerpos que enviará JMeter |
+
+- Obligatorios: `timestamp`, `method` y `endpoint`; las líneas que no son JSON o no los tienen se ignoran.
+- `requestId`, `userId` y los tamaños en bytes se leen pero el modelo aún no los usa.
+- Los campos que son ids dentro del `body` tienen que acabar en `Id` (`fromAccountId`, `userId`): se toman de los valores vistos en vez de inventarse.
 
 ## Cómo simula el `.jmx` el tráfico
 
@@ -70,7 +79,7 @@ Thread Group
 ## Limitaciones conocidas (TODO)
 
 - **No hay correlación entre peticiones**: tras `POST /api/accounts` el siguiente `deposit` usa un id visto en los logs, no el de la cuenta recién creada (habría que extraerlo de la respuesta). Los campos de un cuerpo se generan por separado (p. ej. `fromAccountId` puede coincidir con `toAccountId`), y los valores únicos (emails) se repiten.
-- **Los nombres de los campos del log de ejemplo son supuestos**: los DTOs de `java-app-mock` aún están vacíos.
+- **Los nombres de los campos de los `body` del log de ejemplo son supuestos**: hay que ajustarlos cuando estén los DTOs de `java-app-mock`.
 - **No hay perfil horario**: la intensidad es constante durante la prueba.
 - **`scaling.py` es una heurística** del código base (sesiones observadas × 1,5), no una predicción.
 - **El manifiesto de Kubernetes** que generaba el código base se ha quitado: el despliegue de JMeter es cosa de `3-execution` y hay que acordar con ellos qué les pasamos.

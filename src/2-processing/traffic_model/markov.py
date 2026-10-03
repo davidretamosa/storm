@@ -16,7 +16,7 @@ def session_steps(df: pd.DataFrame) -> pd.DataFrame:
     """Peticiones con sesión, ordenadas por tiempo, con su estado ('key') y el siguiente ('next_key')."""
     if "session_id" not in df or df["session_id"].isna().all():
         raise ValueError(
-            "Los logs no tienen el campo 'sesion=': sin él no se pueden reconstruir "
+            "Los logs no tienen el campo 'sessionId': sin él no se pueden reconstruir "
             "las secuencias de navegación (ver README)."
         )
 

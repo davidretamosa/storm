@@ -27,10 +27,10 @@ def test_path_params_several_and_frequency():
 
 def test_body_models_numbers_ids_and_choices():
     df = requests(
-        ("POST", "/api/transfers", "/api/transfers", '{"fromAccountId": 1, "amount": 10.5, "concept": "a"}'),
-        ("POST", "/api/transfers", "/api/transfers", '{"fromAccountId": 2, "amount": 99, "concept": "a"}'),
-        ("POST", "/api/transfers", "/api/transfers", '{"fromAccountId": 1, "amount": 50.25}'),
-        ("POST", "/api/transfers", "/api/transfers", "no es json"),
+        ("POST", "/api/transfers", "/api/transfers", {"fromAccountId": 1, "amount": 10.5, "concept": "a"}),
+        ("POST", "/api/transfers", "/api/transfers", {"fromAccountId": 2, "amount": 99, "concept": "a"}),
+        ("POST", "/api/transfers", "/api/transfers", {"fromAccountId": 1, "amount": 50.25}),
+        ("POST", "/api/transfers", "/api/transfers", "no es un objeto"),
     )
     model = build_body_models(df)["POST /api/transfers"]
     assert model["amount"] == {"type": "number", "min": 10.5, "max": 99, "decimals": 2, "presence": 1.0}
@@ -42,8 +42,8 @@ def test_body_models_numbers_ids_and_choices():
 
 def test_body_models_skip_unsafe_and_nested_values():
     df = requests(
-        ("POST", "/api/x", "/api/x", '{"meta": {"k": [1, 2]}, "name": "${evil}"}'),
-        ("POST", "/api/x", "/api/x", '{"meta": {"k": [1, 2]}, "name": "ok"}'),
+        ("POST", "/api/x", "/api/x", {"meta": {"k": [1, 2]}, "name": "${evil}"}),
+        ("POST", "/api/x", "/api/x", {"meta": {"k": [1, 2]}, "name": "ok"}),
     )
     model = build_body_models(df)["POST /api/x"]
     assert model["meta"]["values"] == [[{"k": [1, 2]}, 1.0]]

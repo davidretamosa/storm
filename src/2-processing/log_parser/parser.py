@@ -1,58 +1,59 @@
-"""Lectura de los logs de acceso de la aplicación objetivo."""
-import re
+"""Lectura de los logs de acceso de la aplicación objetivo (app del banco, 1-input/java-app-mock).
+
+Formato: JSON Lines, una petición por línea:
+{"timestamp":"2026-10-01T11:42:35.123Z","requestId":"a1b2...","sessionId":"sess-9f8e7d6c","userId":12,
+ "method":"POST","endpoint":"/api/accounts/{id}/deposit","path":"/api/accounts/3/deposit","status":200,
+ "durationMs":45,"requestSizeBytes":17,"responseSizeBytes":256,"body":{"amount":200.00}}
+"""
+import json
 
 import pandas as pd
 
-# Formato de línea (el mismo que usa la echo-api del grupo de 3-execution):
-# 2026-09-25T10:15:02.123+02:00 INFO  [a1b2c3d4e5f6] ACCESS - metodo=POST endpoint=/api/accounts/{id}/deposit
-#   ruta=/api/accounts/3/deposit ... ua="Apache-HttpClient/4.5.14" sesion=s01 cuerpo={"amount": 50.0}
-LINE_PATTERN = re.compile(r"^(?P<timestamp>\S+)\s+\w+\s+\[(?P<request_id>[^\]]*)\]\s+ACCESS\s+-\s+(?P<fields>.*)$")
-# Valores sin espacios o entre comillas (ua="Mozilla/5.0 (Windows NT ...)")
-FIELD_PATTERN = re.compile(r'(\w+)=("[^"]*"|\S+)')
-# El cuerpo va siempre al final de la línea y puede tener espacios
-BODY_PATTERN = re.compile(r"\s+cuerpo=(?P<body>.*)$")
-
 # Campo del log -> columna del DataFrame
 COLUMNS = {
-    "sesion": "session_id",
-    "metodo": "method",
+    "timestamp": "timestamp",
+    "requestId": "request_id",
+    "sessionId": "session_id",
+    "userId": "user_id",
+    "method": "method",
     "endpoint": "endpoint",
-    "ruta": "path",
-    "estado": "status",
-    "duracionMs": "duration_ms",
+    "path": "path",
+    "status": "status",
+    "durationMs": "duration_ms",
+    "body": "body",
 }
+# Sin estos campos la línea no sirve para modelar el tráfico
+REQUIRED = ("timestamp", "method", "endpoint")
 
 
-def _body(raw):
-    """'-' (sin cuerpo) y los cuerpos recortados por la app ('...') no sirven como ejemplo."""
-    if raw is None or raw == "-" or raw.endswith("..."):
+def _parse_line(line: str):
+    """Diccionario de la línea, o None si no es un log de petición válido."""
+    try:
+        entry = json.loads(line)
+    except ValueError:
         return None
-    return raw
+    if not isinstance(entry, dict) or any(not entry.get(field) for field in REQUIRED):
+        return None
+    row = {column: entry.get(field) for field, column in COLUMNS.items()}
+    # El cuerpo solo se usa si es un objeto JSON ({"amount": 200.0}); null o texto -> None
+    if not isinstance(row["body"], dict):
+        row["body"] = None
+    return row
 
 
 def parse_logs(log_file_path: str) -> pd.DataFrame:
-    """Convierte las líneas ACCESS del log en un DataFrame ordenado por tiempo."""
-    rows = []
-    with open(log_file_path, encoding="utf-8") as f:
-        for line in f:
-            match = LINE_PATTERN.match(line.strip())
-            if not match:
-                continue
-            fields_text = match["fields"]
-            body = BODY_PATTERN.search(fields_text)
-            if body:
-                fields_text = fields_text[:body.start()]
-            fields = dict(FIELD_PATTERN.findall(fields_text))
-            row = {"timestamp": match["timestamp"], "request_id": match["request_id"]}
-            row.update({col: fields.get(key) for key, col in COLUMNS.items()})
-            row["body"] = _body(body["body"].strip() if body else None)
-            rows.append(row)
+    """Convierte el log (una petición JSON por línea) en un DataFrame ordenado por tiempo.
 
-    df = pd.DataFrame(rows, columns=["timestamp", "request_id", *COLUMNS.values(), "body"])
+    Las líneas vacías, las que no son JSON y las que no tienen timestamp/method/endpoint se ignoran.
+    """
+    with open(log_file_path, encoding="utf-8") as f:
+        rows = [row for row in map(_parse_line, f) if row is not None]
+
+    df = pd.DataFrame(rows, columns=list(COLUMNS.values()))
     if df.empty:
         return df
 
-    df["timestamp"] = pd.to_datetime(df["timestamp"], format="ISO8601")
+    df["timestamp"] = pd.to_datetime(df["timestamp"], format="ISO8601", utc=True)
     df["status"] = pd.to_numeric(df["status"], errors="coerce")
     df["duration_ms"] = pd.to_numeric(df["duration_ms"], errors="coerce")
     return df.sort_values("timestamp", kind="stable").reset_index(drop=True)
