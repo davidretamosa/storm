@@ -60,7 +60,8 @@ def test_think_times_are_capped():
 
 def test_scaling(log_file):
     profile = predict_traffic_scale(parse_logs(log_file))
-    assert profile == {"vusers": 3, "ramp_up_seconds": 60, "duration_seconds": 300}
+    # sesiones a (09:00:01-05) y b (09:00:02-04) coinciden en el tiempo: pico = 2
+    assert profile == {"vusers": 2, "ramp_up_seconds": 60, "duration_seconds": 300}
 
 
 def test_peak_concurrency_not_total_sessions():
