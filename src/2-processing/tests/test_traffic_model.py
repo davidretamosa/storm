@@ -61,3 +61,31 @@ def test_think_times_are_capped():
 def test_scaling(log_file):
     profile = predict_traffic_scale(parse_logs(log_file))
     assert profile == {"vusers": 3, "ramp_up_seconds": 60, "duration_seconds": 300}
+
+
+def test_peak_concurrency_not_total_sessions():
+    import pandas as pd
+    from traffic_model.scaling import peak_concurrent_sessions
+
+    times = pd.to_datetime
+    # 3 sesiones una detrás de otra (nunca coinciden) + 2 que coinciden entre ellas
+    df = pd.DataFrame({
+        "session_id": ["a", "a", "b", "b", "c", "c", "d", "d", "e", "e"],
+        "timestamp": times([
+            "2026-10-01T09:00:00", "2026-10-01T09:01:00",   # a
+            "2026-10-01T10:00:00", "2026-10-01T10:01:00",   # b
+            "2026-10-01T11:00:00", "2026-10-01T11:01:00",   # c
+            "2026-10-01T12:00:00", "2026-10-01T12:05:00",   # d  ┐ abiertas
+            "2026-10-01T12:01:00", "2026-10-01T12:02:00",   # e  ┘ a la vez
+        ]),
+    })
+    assert peak_concurrent_sessions(df) == 2               # 5 sesiones en total, pero como mucho 2 a la vez
+    assert predict_traffic_scale(df)["vusers"] == 3        # 2 x 1,5
+
+
+def test_single_request_sessions_count():
+    import pandas as pd
+    from traffic_model.scaling import peak_concurrent_sessions
+
+    df = pd.DataFrame({"session_id": ["a", "b"], "timestamp": pd.to_datetime(["2026-10-01T09:00:00"] * 2)})
+    assert peak_concurrent_sessions(df) == 2

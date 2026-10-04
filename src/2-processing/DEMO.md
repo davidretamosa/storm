@@ -76,7 +76,7 @@ Logs: 95 peticiones, 30 sesiones.                   ← "hemos leído el log"
   - Nunca usado en los logs (se probará poco, por el .jar): DELETE /api/accounts/{id}
                                                     ← "uno que nadie usa: gracias al .jar también se prueba, un poco"
 --- 2. MODELADO DEL TRÁFICO ---
-12 estados en la cadena de Markov; 45 usuarios virtuales.
+12 estados en la cadena de Markov; 5 usuarios virtuales.
                                                     ← "el modelo: qué hace cada usuario después de cada paso"
 6 peticiones con parámetros de ruta; 5 con cuerpo JSON.
                                                     ← "también aprende los ids y los datos que envían"
