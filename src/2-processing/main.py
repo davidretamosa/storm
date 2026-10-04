@@ -71,7 +71,7 @@ def main() -> None:
     bodies = build_body_models(df_logs, endpoints)
     profile = predict_traffic_scale(df_logs)
     print(f"{len(model['states'])} estados en la cadena de Markov; {profile['vusers']} usuarios virtuales.")
-    print(f"{len(path_params)} peticiones con parámetros de ruta; {lvaleen(bodies)} con cuerpo JSON.")
+    print(f"{len(path_params)} peticiones con parámetros de ruta; {len(bodies)} con cuerpo JSON.")
 
     print("--- 3. GENERACIÓN DEL ESCENARIO ---")
     generate_jmx(model, think_times, profile, opts.output, opts.host, opts.port, path_params, bodies)
