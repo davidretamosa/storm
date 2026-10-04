@@ -34,7 +34,7 @@ Logs: 95 peticiones, 30 sesiones.
 .jar: 12 endpoints.
   - Nunca usado en los logs (se probará poco, por el .jar): DELETE /api/accounts/{id}
 --- 2. MODELADO DEL TRÁFICO ---
-12 estados en la cadena de Markov; 5 usuarios virtuales.
+12 estados en la cadena de Markov; 3 usuarios virtuales.
 6 peticiones con parámetros de ruta; 5 con cuerpo JSON.
 --- 3. GENERACIÓN DEL ESCENARIO ---
 Plan generado: output/generated_scenario.jmx
@@ -171,7 +171,7 @@ Cada archivo aprende **una cosa distinta** de la misma tabla:
 | `think_time.py` | `build_think_times(tabla)` | **Cuánto espera el usuario** entre una petición y la siguiente | "entre ver la cuenta y transferir: de 6 a 18 s" |
 | `payloads.py` | `build_path_params(tabla)` | **Qué valores tienen los `{id}`** de las rutas | "`/api/accounts/{id}` usa las cuentas 1, 2, 3, 4, 5" |
 | `payloads.py` | `build_body_models(tabla)` | **Cómo son los bodies** de cada petición, campo a campo | "`amount` entre 5 y 300; `concept`: alquiler, luz…" |
-| `scaling.py` | `predict_traffic_scale(tabla)` | **Cuántos usuarios virtuales** simular | "como mucho hubo 3 sesiones a la vez → 3 × 1,5 = 5 usuarios" |
+| `scaling.py` | `predict_traffic_scale(tabla)` | **Cuántos usuarios virtuales** simular | "como mucho hubo 3 sesiones a la vez → 3 usuarios" |
 
 `markov.py` por dentro:
 
@@ -310,7 +310,7 @@ Thread Group
 - **No hay correlación entre peticiones**: tras `POST /api/accounts`, el siguiente `deposit` usa un id visto en los logs, no el de la cuenta recién creada (habría que leerlo de la respuesta). Los campos de un body se generan por separado (`fromAccountId` puede coincidir con `toAccountId`) y los valores únicos (emails) se repiten.
 - **Los nombres de los campos de los `body` del log de ejemplo son supuestos**: hay que ajustarlos cuando estén los DTOs de `java-app-mock`.
 - **No hay perfil horario**: la intensidad es constante durante la prueba.
-- **`scaling.py`**: usuarios virtuales = pico de sesiones a la vez × 1,5 (margen de estrés). El 1,5 es una elección, no un dato; se cambia con `-Jvusers`.
+- **`scaling.py`**: usuarios virtuales = pico real de sesiones a la vez (reproduce el peor momento del log). Para pruebas de estrés se sube al lanzar JMeter con `-Jvusers`.
 - **`jar_parser`**: ver la sección 5 (decisiones pendientes).
 - **Kubernetes**: el despliegue de JMeter es cosa de `3-execution`; hay que acordar con ellos cómo les pasamos el `.jmx`.
 

@@ -80,7 +80,7 @@ def test_peak_concurrency_not_total_sessions():
         ]),
     })
     assert peak_concurrent_sessions(df) == 2               # 5 sesiones en total, pero como mucho 2 a la vez
-    assert predict_traffic_scale(df)["vusers"] == 3        # 2 x 1,5
+    assert predict_traffic_scale(df)["vusers"] == 2        # el pico real
 
 
 def test_single_request_sessions_count():

@@ -1,6 +1,4 @@
 """Cuánta carga simular: cuántos usuarios virtuales, cuánto tarda en arrancarlos y cuánto dura."""
-import math
-
 import pandas as pd
 
 # Sin logs no hay datos de cuánta gente usa la app: valor pequeño por defecto
@@ -24,17 +22,18 @@ def peak_concurrent_sessions(df):
     return int(events["change"].cumsum().max())
 
 
-def predict_traffic_scale(df, growth_factor=1.5, ramp_up_seconds=60, duration_seconds=300):
-    """Usuarios virtuales = pico de sesiones a la vez en el log x growth_factor (+50 % de margen).
+def predict_traffic_scale(df, ramp_up_seconds=60, duration_seconds=300):
+    """Usuarios virtuales = pico de sesiones a la vez en el log: el plan reproduce el peor momento real.
 
     Se usa el pico y no el total de sesiones: el total crece con lo largo que sea el log
     (un log de un día daría miles de usuarios), el pico solo depende del momento de más tráfico.
-    Todo se puede cambiar al lanzar JMeter: -Jvusers= -Jrampup= -Jduration=
+    Para pruebas de estrés (más carga que la real) se cambia al lanzar JMeter: -Jvusers=
+    (también -Jrampup= -Jduration=).
     """
     if df is None or df.empty or "session_id" not in df or df["session_id"].isna().all():
         vusers = DEFAULT_VUSERS
     else:
-        vusers = max(1, math.ceil(peak_concurrent_sessions(df) * growth_factor))
+        vusers = max(1, peak_concurrent_sessions(df))
     return {
         "vusers": vusers,
         "ramp_up_seconds": ramp_up_seconds,

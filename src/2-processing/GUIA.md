@@ -150,8 +150,9 @@ Para cada archivo: **qué hay que entender sí o sí** y **preguntas para compro
 
 ### 3.7 `traffic_model/scaling.py` — cuántos usuarios
 
-- Usuarios virtuales = **pico de sesiones abiertas a la vez** en el log × **1,5** (`peak_concurrent_sessions`). Rampa 60 s, duración 300 s.
-- Por qué el pico y no el total de sesiones: el total crece con lo largo que sea el log (un log de una semana daba 315 usuarios en vez de 45); el pico solo depende del momento de más tráfico (5 en los dos casos).
+- Usuarios virtuales = **pico de sesiones abiertas a la vez** en el log (`peak_concurrent_sessions`): el plan reproduce el peor momento real. Rampa 60 s, duración 300 s.
+- Por qué el pico y no el total de sesiones: el total crece con lo largo que sea el log (con la regla antigua, sesiones × 1,5, un log de una semana daba 315 usuarios en vez de 45); el pico solo depende del momento de más tráfico (3 en los dos casos).
+- No hay margen extra (antes ×1,5): reproducir y estresar son cosas distintas. Para estrés, `-Jvusers` al lanzar JMeter.
 - Sin logs: 10 usuarios (suposición).
 - Es una **regla provisional** (ver [decisión D5](#d5-cuántos-usuarios-virtuales-y-cuánto-tiempo)).
 
@@ -216,7 +217,7 @@ Para cada archivo: **qué hay que entender sí o sí** y **preguntas para compro
 | Opción | Por defecto | Qué hace |
 |---|---|---|
 | `-Jhost=...`, `-Jport=...` | Los de `main.py` | Servidor al que se envían las peticiones |
-| `-Jvusers=...` | El de `scaling.py` (5 con la demo) | Usuarios virtuales |
+| `-Jvusers=...` | El de `scaling.py` (3 con la demo) | Usuarios virtuales |
 | `-Jrampup=...` | 60 | Segundos para arrancar a todos los usuarios |
 | `-Jduration=...` | 300 | Duración de la prueba en segundos |
 
@@ -230,7 +231,6 @@ Ejemplo (demo corta): `jmeter -n -t output/generated_scenario.jmx -Jvusers=10 -J
 |---|---|---|
 | `samples=20` | `think_time.py` | Cuántos cuantiles se guardan de las pausas de cada transición |
 | `max_ms=120_000` | `think_time.py` | Pausa máxima: 2 minutos. Si alguien tardó más, se cuenta como 2 min |
-| `growth_factor=1.5` | `scaling.py` | Usuarios virtuales = pico de sesiones a la vez × 1,5 (+50 % de margen de estrés) |
 | `DEFAULT_VUSERS=10` | `scaling.py` | Usuarios virtuales cuando no hay logs |
 | `DEFAULT_PAUSE_MS` (1–3 s) | `think_time.py` | Pausa cuando no hay datos (se cambia con `--default-pause`) |
 | `ramp_up_seconds=60` | `scaling.py` | JMeter tarda 60 s en arrancar a todos los usuarios virtuales (no todos a la vez) |
@@ -320,7 +320,7 @@ Cuando decidáis una, apuntad la decisión aquí y pasadla a la [sección 7](#7-
 
 ### D5. Cuántos usuarios virtuales y cuánto tiempo
 
-> ✅ **Hecho (opción a + b):** usuarios = pico de sesiones a la vez × 1,5, y se puede cambiar con `-Jvusers`. Antes era "sesiones del log × 1,5", que crecía con lo largo del log.
+> ✅ **Hecho (opción a + b):** usuarios = pico real de sesiones a la vez, y se puede cambiar con `-Jvusers` (p. ej. para estrés). Antes era "sesiones del log × 1,5", que crecía con lo largo del log; el 1,5 se ha quitado porque no tenía justificación.
 
 **Problema (original).** Era una regla fija heredada del código de Gemini: sesiones del log × 1,5, durante 5 minutos. No tenía ninguna base.
 
