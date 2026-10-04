@@ -25,7 +25,7 @@ def pause_range(text):
     if low == high:
         return [int(low * 1000)]
     return [int(round(v)) for v in np.linspace(low * 1000, high * 1000, 5)]
-
+    #dona 5 números repartits igualment entre low y high i després jmeter agafa un a latzar a cada pausa
 
 def main() -> None:
     args = argparse.ArgumentParser(description="Genera un plan de JMeter a partir de logs y/o del .jar de la aplicación.")
@@ -71,7 +71,7 @@ def main() -> None:
     bodies = build_body_models(df_logs, endpoints)
     profile = predict_traffic_scale(df_logs)
     print(f"{len(model['states'])} estados en la cadena de Markov; {profile['vusers']} usuarios virtuales.")
-    print(f"{len(path_params)} peticiones con parámetros de ruta; {len(bodies)} con cuerpo JSON.")
+    print(f"{len(path_params)} peticiones con parámetros de ruta; {lvaleen(bodies)} con cuerpo JSON.")
 
     print("--- 3. GENERACIÓN DEL ESCENARIO ---")
     generate_jmx(model, think_times, profile, opts.output, opts.host, opts.port, path_params, bodies)

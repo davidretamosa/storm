@@ -144,7 +144,7 @@ Para cada archivo: **qué hay que entender sí o sí** y **preguntas para compro
   - número normal (`amount`) → `number`: valor al azar entre el mínimo y el máximo vistos.
   - id (`fromAccountId`, `userId`…), texto u objeto → `choice`: uno de los valores vistos, según su frecuencia.
   - `presence`: en qué proporción de bodies aparece el campo.
-- Con `--jar`: las peticiones **sin ningún body en los logs** lo generan desde su DTO (`add_fields_from_dto`), con un valor por tipo (`default_field_model`). Si hay bodies en los logs, mandan los logs.
+- Con `--jar`: las peticiones **sin ningún body en los logs** lo generan desde su DTO (`add_bodies_from_dto`), con un valor por tipo (`default_field_model`). Si hay bodies en los logs, mandan los logs.
 
 ❓ *¿Por qué los ids no se generan "entre el mínimo y el máximo" como los importes?*
 
