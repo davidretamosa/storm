@@ -20,3 +20,9 @@ venv/
 .vscode/
 .idea/
 .DS_Store
+
+# Laboratorio de pruebas de carga (src/3-execution/docker)
+# La plantilla de JMeter SÍ se versiona; los demás .jmx siguen ignorados
+!src/3-execution/docker/jmeter/plan.jmx
+# Informes generados en cada prueba
+src/3-execution/docker/resultados/
