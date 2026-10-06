@@ -12,3 +12,8 @@ INSERT INTO accounts (id, iban, balance, user_id) VALUES (3, 'ES6000491500051234
 INSERT INTO transactions (id, type, amount, concept, timestamp, account_id) VALUES (1, 'DEPOSIT', 500.00, 'Nómina', '2026-09-01T09:00:00', 1);
 INSERT INTO transactions (id, type, amount, concept, timestamp, account_id) VALUES (2, 'WITHDRAWAL', 100.00, 'Cajero', '2026-09-15T18:30:00', 1);
 INSERT INTO transactions (id, type, amount, concept, timestamp, account_id) VALUES (3, 'DEPOSIT', 850.50, 'Nómina', '2026-09-01T09:05:00', 2);
+
+-- Reiniciar los contadores de autogenerado para que no choquen con los IDs del seed
+ALTER TABLE users ALTER COLUMN id RESTART WITH 100;
+ALTER TABLE accounts ALTER COLUMN id RESTART WITH 100;
+ALTER TABLE transactions ALTER COLUMN id RESTART WITH 100;
