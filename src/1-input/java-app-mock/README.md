@@ -190,4 +190,7 @@ Ejemplos:
 - Esta app usa H2 en memoria para simplificar el despliegue en Kubernetes; no requiere base de datos externa.
 - El paquete base es `com.pae.bankapp` (ajustar si se decide otro nombre para el proyecto).
 
+compilar: ``./mvnw compile``
+
+``./mvnw clean spring-boot:run``
 Consola web visual para ver las tablas y datos en http://localhost:8080/h2-console
