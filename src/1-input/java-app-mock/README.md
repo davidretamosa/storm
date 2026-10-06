@@ -153,7 +153,7 @@ Los logs se generan en formato **JSON estructurado**, pensados para ser consumid
   "requestSizeBytes": 128,
   "responseSizeBytes": 256,
   "body": {
-    "acountId": 3,
+    "accountId": 3,
     "receptorID": 5,
     "amount": 200.00,
     "concept": "alquiler"
@@ -189,3 +189,5 @@ Ejemplos:
 
 - Esta app usa H2 en memoria para simplificar el despliegue en Kubernetes; no requiere base de datos externa.
 - El paquete base es `com.pae.bankapp` (ajustar si se decide otro nombre para el proyecto).
+
+Consola web visual para ver las tablas y datos en http://localhost:8080/h2-console
