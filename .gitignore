@@ -20,10 +20,3 @@ venv/
 .vscode/
 .idea/
 .DS_Store
-
-# Laboratorio de pruebas de carga (src/3-execution/lab-jmeter)
-# La app de prueba y el plan de JMeter SÍ se versionan
-!src/3-execution/lab-jmeter/app/app.jar
-!src/3-execution/lab-jmeter/jmeter/plan.jmx
-# Resultados generados en cada prueba
-src/3-execution/lab-jmeter/resultados/
