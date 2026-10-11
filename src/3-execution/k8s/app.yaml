@@ -21,11 +21,17 @@ spec:
           imagePullPolicy: Never
           ports:
             - containerPort: 8080
+          # Margen amplio: bajo carga la app tarda en responder y no debe salir
+          # del Service por estar ocupada (con 1 s de timeout pasaba y causaba
+          # errores "Connection refused" en las pruebas). Solo se saca si no
+          # responde durante un minuto seguido.
           readinessProbe:
             httpGet:
               path: /hello
               port: 8080
-            periodSeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
           resources:
             requests:
               cpu: 250m

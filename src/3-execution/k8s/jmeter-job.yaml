@@ -1,6 +1,7 @@
 # Una prueba de carga = un Job: arranca, ejecuta plan.jmx y termina.
-# El plan llega desde el ConfigMap jmeter-plan (lo crea desplegar.sh a partir
-# de lab-jmeter/jmeter/plan.jmx). Para lanzarla: ./lanzar-prueba.sh
+# El plan y los escenarios llegan desde los ConfigMaps jmeter-plan y
+# jmeter-escenarios (los crea desplegar.sh). Para lanzarla: ./lanzar-prueba.sh <escenario>
+# (el script sustituye __ESCENARIO__ por el escenario elegido).
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -20,10 +21,14 @@ spec:
           image: lab-jmeter:latest
           imagePullPolicy: Never
           # /test es de solo lectura (ConfigMap): el log va a /resultados
-          args: ["-n", "-t", "/test/plan.jmx", "-l", "/resultados/resultados.jtl", "-j", "/resultados/jmeter.log", "-f"]
+          args: ["-n", "-t", "/test/plan.jmx",
+                 "-q", "/escenarios/__ESCENARIO__.properties", "-Jescenario=__ESCENARIO__",
+                 "-l", "/resultados/resultados.jtl", "-j", "/resultados/jmeter.log", "-f"]
           volumeMounts:
             - name: plan
               mountPath: /test
+            - name: escenarios
+              mountPath: /escenarios
             - name: resultados
               mountPath: /resultados
           resources:
@@ -36,5 +41,8 @@ spec:
         - name: plan
           configMap:
             name: jmeter-plan
+        - name: escenarios
+          configMap:
+            name: jmeter-escenarios
         - name: resultados
           emptyDir: {}

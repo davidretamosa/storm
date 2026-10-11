@@ -18,6 +18,7 @@ configmap() {  # configmap <nombre> <--from-file ...>: crea o actualiza
   kubectl -n "$NS" create configmap "$nombre" "$@" --dry-run=client -o yaml | kubectl apply -f -
 }
 configmap jmeter-plan --from-file=plan.jmx="$LAB/jmeter/plan.jmx"
+configmap jmeter-escenarios --from-file=escenarios/
 configmap grafana-datasources --from-file="$LAB/grafana/provisioning/datasources/datasources.yml"
 configmap grafana-dashboards \
   --from-file="$LAB/grafana/provisioning/dashboards/dashboards.yml" \
