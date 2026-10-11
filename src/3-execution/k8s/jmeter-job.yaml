@@ -1,0 +1,40 @@
+# Una prueba de carga = un Job: arranca, ejecuta plan.jmx y termina.
+# El plan llega desde el ConfigMap jmeter-plan (lo crea desplegar.sh a partir
+# de lab-jmeter/jmeter/plan.jmx). Para lanzarla: ./lanzar-prueba.sh
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: jmeter
+  namespace: lab-jmeter
+spec:
+  backoffLimit: 0                 # si falla, no se repite sola
+  ttlSecondsAfterFinished: 3600   # se borra sola una hora después
+  template:
+    metadata:
+      labels:
+        app: jmeter
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: jmeter
+          image: lab-jmeter:latest
+          imagePullPolicy: Never
+          # /test es de solo lectura (ConfigMap): el log va a /resultados
+          args: ["-n", "-t", "/test/plan.jmx", "-l", "/resultados/resultados.jtl", "-j", "/resultados/jmeter.log", "-f"]
+          volumeMounts:
+            - name: plan
+              mountPath: /test
+            - name: resultados
+              mountPath: /resultados
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+      volumes:
+        - name: plan
+          configMap:
+            name: jmeter-plan
+        - name: resultados
+          emptyDir: {}

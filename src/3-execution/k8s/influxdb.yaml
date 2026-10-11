@@ -1,0 +1,48 @@
+# InfluxDB 1.8: guarda las métricas que envía JMeter (plan.jmx -> influxdb:8086, db jmeter).
+# Los datos viven en un emptyDir: se pierden si se borra el pod (suficiente para el laboratorio).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: influxdb
+  namespace: lab-jmeter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: influxdb
+  template:
+    metadata:
+      labels:
+        app: influxdb
+    spec:
+      containers:
+        - name: influxdb
+          image: influxdb:1.8
+          env:
+            - name: INFLUXDB_DB
+              value: jmeter
+          ports:
+            - containerPort: 8086
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: 8086
+            periodSeconds: 5
+          volumeMounts:
+            - name: datos
+              mountPath: /var/lib/influxdb
+      volumes:
+        - name: datos
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: influxdb
+  namespace: lab-jmeter
+spec:
+  selector:
+    app: influxdb
+  ports:
+    - port: 8086
+      targetPort: 8086

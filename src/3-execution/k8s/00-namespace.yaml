@@ -1,0 +1,6 @@
+# Espacio propio para el laboratorio: todo se borra con
+#   kubectl delete namespace lab-jmeter
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab-jmeter
