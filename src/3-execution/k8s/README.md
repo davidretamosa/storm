@@ -22,6 +22,7 @@ Desde esta carpeta (`src/3-execution/k8s`):
 ```bash
 ./desplegar.sh                 # construye las imágenes y levanta app, InfluxDB, Prometheus y Grafana
 ./lanzar-prueba.sh normal      # lanza una prueba con el escenario indicado (por defecto, humo)
+./lanzar-prueba.sh normal bankapp   # la misma prueba contra la bankapp (ver ../bankapp)
 ./quitar.sh                    # borra todo el laboratorio del clúster
 ```
 
