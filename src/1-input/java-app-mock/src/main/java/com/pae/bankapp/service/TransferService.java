@@ -1,6 +1,7 @@
 package com.pae.bankapp.service;
 
 import com.pae.bankapp.dto.TransferRequest;
+import com.pae.bankapp.dto.TransferResponse;
 import com.pae.bankapp.entity.Account;
 import com.pae.bankapp.entity.Transaction;
 import com.pae.bankapp.exception.InsufficientFundsException;
@@ -26,7 +27,7 @@ public class TransferService {
     }
 
     @Transactional
-    public void transfer(TransferRequest request) {
+    public TransferResponse transfer(TransferRequest request) {
 
         // 1. Buscar ambas cuentas (o fallar con 404 si alguna no existe)
         Account fromAccount = accountRepository.findById(request.getFromAccountId())
@@ -69,5 +70,21 @@ public class TransferService {
 
         transactionRepository.save(outTransaction);
         transactionRepository.save(inTransaction);
+
+        return new TransferResponse(
+            "Transfer completed successfully from " + fromAccount.getUser().getName()
+                + " (" + fromAccount.getIban() + ") to " + toAccount.getUser().getName()
+                + " (" + toAccount.getIban() + ") for " + amount.toPlainString() + ".",
+            amount,
+            new TransferResponse.AccountDetails(
+                fromAccount.getId(),
+                fromAccount.getIban(),
+                fromAccount.getUser().getName(),
+                fromAccount.getBalance()),
+            new TransferResponse.AccountDetails(
+                toAccount.getId(),
+                toAccount.getIban(),
+                toAccount.getUser().getName(),
+                toAccount.getBalance()));
     }
 }
