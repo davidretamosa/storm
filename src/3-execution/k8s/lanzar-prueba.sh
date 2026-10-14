@@ -25,9 +25,12 @@ case "$OBJETIVO" in
   *)       echo "Objetivo desconocido '$OBJETIVO': usa app o bankapp"; exit 1 ;;
 esac
 
+# Criterios de aprobado del objetivo (MAX_ERRORES_PCT y MAX_P95_MS)
+. "criterios/$OBJETIVO.properties"
+
 # Un Job no se puede volver a ejecutar: se borra el anterior y se crea otro
 kubectl -n "$NS" delete job jmeter --ignore-not-found
-sed -e "s/__ESCENARIO__/$ESCENARIO/g" -e "s/__PLAN__/$PLAN/g" -e "s/__HOST__/$OBJETIVO/g" jmeter-job.yaml | kubectl apply -f -
+sed -e "s/__ESCENARIO__/$ESCENARIO/g" -e "s/__PLAN__/$PLAN/g" -e "s/__HOST__/$OBJETIVO/g"     -e "s/__MAX_ERRORES_PCT__/$MAX_ERRORES_PCT/g" -e "s/__MAX_P95_MS__/$MAX_P95_MS/g" jmeter-job.yaml | kubectl apply -f -
 
 echo "Escenario '$ESCENARIO' contra $OBJETIVO en marcha:"
 grep -v '^#' "escenarios/$ESCENARIO.properties" | grep . | sed 's/^/  /'
@@ -35,9 +38,14 @@ echo "Dashboard: http://localhost:30000/d/lab-jmeter-k8s"
 kubectl -n "$NS" wait --for=condition=ready pod -l job-name=jmeter --timeout=120s >/dev/null 2>&1 || true
 kubectl -n "$NS" logs -f job/jmeter
 
-if kubectl -n "$NS" wait --for=condition=complete job/jmeter --timeout=60s >/dev/null 2>&1; then
-  echo "Prueba '$ESCENARIO' terminada correctamente."
-else
-  echo "La prueba ha fallado. Revisa: kubectl -n $NS describe job jmeter"
-  exit 1
-fi
+# logs -f termina cuando acaba el pod; se espera a que el Job tenga su estado final
+for i in $(seq 1 30); do
+  ESTADO=$(kubectl -n "$NS" get job jmeter -o jsonpath='{.status.succeeded}/{.status.failed}')
+  [ "$ESTADO" != "/" ] && break
+  sleep 1
+done
+case "$ESTADO" in
+  1/*) echo "Prueba '$ESCENARIO' contra $OBJETIVO: SUPERADA." ;;
+  */1) echo "Prueba '$ESCENARIO' contra $OBJETIVO: NO SUPERADA (detalle arriba)."; exit 1 ;;
+  *)   echo "No se pudo saber el resultado. Revisa: kubectl -n $NS describe job jmeter"; exit 2 ;;
+esac

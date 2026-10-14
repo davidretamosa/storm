@@ -2,7 +2,9 @@
 # El plan y los escenarios llegan desde ConfigMaps (los crea desplegar.sh):
 # jmeter-plan (app de prueba) o jmeter-plan-bankapp, y jmeter-escenarios.
 # Para lanzarla: ./lanzar-prueba.sh <escenario> [app|bankapp]
-# (el script sustituye __ESCENARIO__, __PLAN__ y __HOST__).
+# (el script sustituye los marcadores __ESCENARIO__, __PLAN__, __HOST__ y los criterios).
+# Al terminar, ejecutar-y-evaluar.sh comprueba los criterios de aprobado (criterios/):
+# si no se cumplen, el Job termina en estado Failed.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -21,15 +23,28 @@ spec:
         - name: jmeter
           image: lab-jmeter:latest
           imagePullPolicy: Never
-          # /test es de solo lectura (ConfigMap): el log va a /resultados
+          command: ["sh", "/scripts/ejecutar-y-evaluar.sh"]
+          env:
+            - name: MAX_ERRORES_PCT
+              value: "__MAX_ERRORES_PCT__"
+            - name: MAX_P95_MS
+              value: "__MAX_P95_MS__"
+          # Argumentos de jmeter. /test es de solo lectura (ConfigMap): el log va a /resultados.
+          # El .jtl solo guarda columnas sin texto libre, para poder leerlo como CSV simple.
           args: ["-n", "-t", "/test/plan.jmx",
                  "-q", "/escenarios/__ESCENARIO__.properties", "-Jescenario=__ESCENARIO__", "-Jhost=__HOST__",
-                 "-l", "/resultados/resultados.jtl", "-j", "/resultados/jmeter.log", "-f"]
+                 "-l", "/resultados/resultados.jtl", "-j", "/resultados/jmeter.log", "-f",
+                 "-Jjmeter.save.saveservice.response_message=false",
+                 "-Jjmeter.save.saveservice.failure_message=false",
+                 "-Jjmeter.save.saveservice.thread_name=false",
+                 "-Jjmeter.save.saveservice.url=false"]
           volumeMounts:
             - name: plan
               mountPath: /test
             - name: escenarios
               mountPath: /escenarios
+            - name: scripts
+              mountPath: /scripts
             - name: resultados
               mountPath: /resultados
           resources:
@@ -45,5 +60,8 @@ spec:
         - name: escenarios
           configMap:
             name: jmeter-escenarios
+        - name: scripts
+          configMap:
+            name: jmeter-scripts
         - name: resultados
           emptyDir: {}

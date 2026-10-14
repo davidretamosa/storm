@@ -43,6 +43,29 @@ plan que genera `2-processing`, así que estos escenarios también valdrán para
 crear uno nuevo basta con copiar un fichero, cambiar los números y volver a ejecutar
 `./desplegar.sh`.
 
+## Criterios de aprobado
+
+Cada prueba termina con un veredicto, **SUPERADA** o **NO SUPERADA**, según los criterios del
+objetivo (`criterios/app.properties` y `criterios/bankapp.properties`):
+
+| Criterio | app | bankapp |
+|---|---|---|
+| `MAX_ERRORES_PCT`: % máximo de errores de **cada** operación | 1 % | 0,1 % |
+| `MAX_P95_MS`: el 95 % de las peticiones debe responder en menos de | 1000 ms | 500 ms |
+
+Al acabar, JMeter muestra una tabla por operación (peticiones, % de errores y tiempo medio)
+y marca la que supera el límite. Si la prueba no se supera, el Job queda en estado
+`Failed` y `lanzar-prueba.sh` termina con código 1, así que también sirve para
+automatizarlo. La evaluación la hace `ejecutar-y-evaluar.sh` dentro del pod de JMeter.
+
+Ejemplo real (escenario `normal` contra la bankapp):
+
+```
+[FALLO] Errores: "POST /api/transfers" tiene un 0.30 %, el máximo es 0.1 %
+[OK]    Tiempo: el 95 % de las peticiones responde en 56 ms o menos (máximo 500 ms)
+VEREDICTO: PRUEBA NO SUPERADA
+```
+
 En Grafana todas las pruebas comparten el dashboard; se distinguen por la hora. El nombre
 del escenario queda guardado en InfluxDB (etiqueta `application`).
 
@@ -62,6 +85,9 @@ del escenario queda guardado en InfluxDB (etiqueta `application`).
 | `prometheus.yaml` | Prometheus y sus permisos para leer el cAdvisor del kubelet |
 | `grafana.yaml` | Grafana con datasources y dashboard ya configurados |
 | `jmeter-job.yaml` | Una prueba = un Job que ejecuta `plan.jmx` y termina |
+| `ejecutar-y-evaluar.sh` | Dentro del Job: lanza JMeter y comprueba los criterios de aprobado |
+| `criterios/` | Criterios de aprobado de cada objetivo (app y bankapp) |
+| `escenarios/` | Carga de cada escenario (humo, normal, pico, estres) |
 | `grafana/lab-jmeter-k8s.json` | Dashboard: el de `lab-jmeter` con CPU y memoria por pod |
 
 No se duplica nada de `../lab-jmeter`: `desplegar.sh` construye las imágenes desde
