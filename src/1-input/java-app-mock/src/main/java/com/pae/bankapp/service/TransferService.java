@@ -28,27 +28,21 @@ public class TransferService {
     @Transactional
     public void transfer(TransferRequest request) {
 
-        // 1. Validar que origen y destino no sean la misma cuenta
-        if (request.getFromAccountId().equals(request.getToAccountId())) {
-            throw new InsufficientFundsException(
-                    "fromAccountId and toAccountId must be different");
-        }
-
-        // 2. Buscar ambas cuentas (o fallar con 404 si alguna no existe)
+        // 1. Buscar ambas cuentas (o fallar con 404 si alguna no existe)
         Account fromAccount = accountRepository.findById(request.getFromAccountId())
                 .orElseThrow(() -> new ResourceNotFoundException(
-                        "Account not found: " + request.getFromAccountId()));
+                        "Account with id " + request.getFromAccountId() + " was not found."));
 
         Account toAccount = accountRepository.findById(request.getToAccountId())
                 .orElseThrow(() -> new ResourceNotFoundException(
-                        "Account not found: " + request.getToAccountId()));
+                        "Account with id " + request.getToAccountId() + " was not found."));
 
         BigDecimal amount = request.getAmount();
 
         // 3. Validar saldo suficiente
         if (fromAccount.getBalance().compareTo(amount) < 0) {
             throw new InsufficientFundsException(
-                    "Insufficient funds in account " + fromAccount.getId());
+                    "Account with id " + fromAccount.getId() + " does not have enough balance for this transfer.");
         }
 
         // 4. Actualizar los saldos de ambas cuentas

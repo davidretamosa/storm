@@ -3,6 +3,7 @@ package com.pae.bankapp.exception;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -38,7 +39,7 @@ public class GlobalExceptionHandler {
         ex.getBindingResult().getFieldErrors()
                 .forEach(e -> fieldErrors.put(e.getField(), e.getDefaultMessage()));
 
-        Map<String, Object> body = body(HttpStatus.BAD_REQUEST, "Validation failed");
+        Map<String, Object> body = body(HttpStatus.BAD_REQUEST, "Validation failed. Please correct the highlighted fields.");
         body.put("errors", fieldErrors);
         return ResponseEntity.badRequest().body(body);
     }
@@ -46,7 +47,7 @@ public class GlobalExceptionHandler {
     // The database rejected the operation (e.g. repeated email with the unique constraint) -> 400
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<Map<String, Object>> handleDataIntegrity(DataIntegrityViolationException ex) {
-        return build(HttpStatus.BAD_REQUEST, "Data integrity violation (is the email already registered?)");
+        return build(HttpStatus.BAD_REQUEST, "The email is already registered. Please use a different email address.");
     }
 
     // Helper: builds the response with the given status and message
@@ -62,5 +63,10 @@ public class GlobalExceptionHandler {
         body.put("error", status.getReasonPhrase());
         body.put("message", message);
         return body;
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<Map<String, Object>> handleMalformedJson(HttpMessageNotReadableException ex) {
+        return build(HttpStatus.BAD_REQUEST, "Malformed JSON request. Please check the request body.");
     }
 }

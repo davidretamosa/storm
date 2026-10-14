@@ -32,7 +32,7 @@ public class UserService {
         // findById returns an Optional (the user may not exist).
         // If it is empty we throw an exception, which ends up as a 404.
         User user = userRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("User with id " + id + " not found"));
+                .orElseThrow(() -> new ResourceNotFoundException("User with id " + id + " was not found."));
         return toDTO(user);
     }
 
