@@ -12,6 +12,7 @@ import com.pae.bankapp.exception.ResourceNotFoundException;
 import com.pae.bankapp.repository.AccountRepository;
 import com.pae.bankapp.repository.TransactionRepository;
 import com.pae.bankapp.repository.UserRepository;
+import com.pae.bankapp.util.IbanGenerator;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -51,7 +52,7 @@ public class AccountService {
 
         Account account = new Account();
 
-        account.setIban(dto.getIban());
+        account.setIban(IbanGenerator.generate());
         account.setUser(user);
         account.setBalance(BigDecimal.ZERO);
 
@@ -169,6 +170,20 @@ public class AccountService {
         return transactionRepository
                 .findByAccountId(account.getId(), pageable)
                 .map(this::toTransactionDTO);
+    }
+
+    // =========================
+    // GET TRANSACTION BY ID
+    // =========================
+
+    public TransactionDTO getTransactionById(Long id) {
+
+        Transaction transaction = transactionRepository.findById(id)
+                .orElseThrow(() ->
+                        new ResourceNotFoundException(
+                                "Transaction not found with id: " + id));
+
+        return toTransactionDTO(transaction);
     }
 
     // =========================
