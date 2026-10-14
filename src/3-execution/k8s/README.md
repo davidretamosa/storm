@@ -66,6 +66,21 @@ Ejemplo real (escenario `normal` contra la bankapp):
 VEREDICTO: PRUEBA NO SUPERADA
 ```
 
+## Resultados de cada prueba
+
+Cada prueba deja sus resultados en el equipo, en `resultados/<escenario>-<objetivo>-<fecha>/`
+(esta carpeta no se sube a git):
+
+| Fichero | Qué es |
+|---|---|
+| `informe/index.html` | Informe HTML de JMeter: gráficas, percentiles y errores de esa prueba |
+| `veredicto.txt` | Tabla por operación y resultado de los criterios de aprobado |
+| `resultados.jtl` | Todas las peticiones, una por línea (separado por tabuladores) |
+| `jmeter.log` | Log de JMeter |
+
+Así se pueden guardar y comparar pruebas (por ejemplo, la bankapp antes y después de un
+arreglo). Dentro del clúster también quedan en el disco `jmeter-resultados`.
+
 En Grafana todas las pruebas comparten el dashboard; se distinguen por la hora. El nombre
 del escenario queda guardado en InfluxDB (etiqueta `application`).
 
@@ -80,6 +95,7 @@ del escenario queda guardado en InfluxDB (etiqueta `application`).
 | Fichero | Qué es |
 |---|---|
 | `00-namespace.yaml` | Espacio `lab-jmeter`: todo el laboratorio vive aquí |
+| `almacenamiento.yaml` | Discos persistentes (InfluxDB, Prometheus, resultados) y el pod auxiliar `resultados` |
 | `app.yaml` | La app bajo prueba (Deployment + Service `app:8080`) |
 | `influxdb.yaml` | InfluxDB 1.8, base de datos `jmeter` |
 | `prometheus.yaml` | Prometheus y sus permisos para leer el cAdvisor del kubelet |
@@ -108,5 +124,6 @@ configuración de Grafana.
   Con un margen de 1 s, bajo carga Kubernetes sacaba la app del tráfico por tardar en
   responder y provocaba errores "Connection refused" y esperas de hasta 25 s que no eran
   culpa de la app.
-- **Datos**: InfluxDB y Prometheus guardan los datos en el propio pod; se pierden al
-  borrarlo o con `./quitar.sh`.
+- **Datos**: InfluxDB, Prometheus y los resultados de JMeter están en discos persistentes:
+  sobreviven a reinicios de pods y de Docker. Solo se borran con `./quitar.sh`, que elimina
+  el namespace entero (lo copiado en `resultados/` del equipo se conserva).

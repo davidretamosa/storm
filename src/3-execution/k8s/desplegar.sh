@@ -26,9 +26,10 @@ configmap grafana-dashboards \
   --from-file="$LAB/grafana/provisioning/dashboards/dashboards.yml" \
   --from-file=grafana/lab-jmeter-k8s.json
 
-echo "3/4 Desplegando app, InfluxDB, Prometheus y Grafana..."
+echo "3/4 Desplegando discos, app, InfluxDB, Prometheus y Grafana..."
+kubectl apply -f almacenamiento.yaml
 kubectl apply -f app.yaml -f influxdb.yaml -f prometheus.yaml -f grafana.yaml
-DESPLIEGUES="app influxdb prometheus grafana"
+DESPLIEGUES="resultados app influxdb prometheus grafana"
 # La bankapp solo se despliega si ya se ha construido su imagen
 if docker image inspect bankapp:latest >/dev/null 2>&1; then
   kubectl apply -f bankapp.yaml

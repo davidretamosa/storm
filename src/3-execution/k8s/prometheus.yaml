@@ -75,21 +75,34 @@ spec:
         app: prometheus
     spec:
       serviceAccountName: prometheus
+      # Prometheus no se ejecuta como root: se da su usuario (65534) al disco persistente
+      initContainers:
+        - name: permisos
+          image: busybox:1.36
+          command: ["chown", "-R", "65534:65534", "/prometheus"]
+          volumeMounts:
+            - name: datos
+              mountPath: /prometheus
       containers:
         - name: prometheus
           image: prom/prometheus:latest
           args:
             - "--config.file=/etc/prometheus/prometheus.yml"
-            - "--storage.tsdb.retention.time=1d"
+            - "--storage.tsdb.retention.time=15d"
           ports:
             - containerPort: 9090
           volumeMounts:
             - name: config
               mountPath: /etc/prometheus
+            - name: datos
+              mountPath: /prometheus
       volumes:
         - name: config
           configMap:
             name: prometheus-config
+        - name: datos
+          persistentVolumeClaim:
+            claimName: prometheus-datos
 ---
 apiVersion: v1
 kind: Service
