@@ -47,7 +47,7 @@ public class AccountService {
         User user = userRepository.findById(dto.getUserId())
                 .orElseThrow(() ->
                         new ResourceNotFoundException(
-                                "User not found with id: " + dto.getUserId()));
+                                "User with id " + dto.getUserId() + " was not found."));
 
         Account account = new Account();
 
@@ -81,7 +81,7 @@ public class AccountService {
         Account account = accountRepository.findById(id)
                 .orElseThrow(() ->
                         new ResourceNotFoundException(
-                                "Account not found with id: " + id));
+                                "Account with id " + id + " was not found."));
 
         return toDTO(account);
     }
@@ -96,7 +96,7 @@ public class AccountService {
         Account account = accountRepository.findById(id)
                 .orElseThrow(() ->
                         new ResourceNotFoundException(
-                                "Account not found with id: " + id));
+                                "Account with id " + id + " was not found."));
 
         BigDecimal amount = request.getAmount();
 
@@ -127,13 +127,13 @@ public class AccountService {
         Account account = accountRepository.findById(id)
                 .orElseThrow(() ->
                         new ResourceNotFoundException(
-                                "Account not found with id: " + id));
+                                "Account with id " + id + " was not found."));
 
         BigDecimal amount = request.getAmount();
 
         if (account.getBalance().compareTo(amount) < 0) {
             throw new InsufficientFundsException(
-                    "Insufficient funds for account with id: " + id);
+                    "Account with id " + id + " does not have enough balance for this withdrawal.");
         }
 
         account.setBalance(
@@ -164,7 +164,7 @@ public class AccountService {
         Account account = accountRepository.findById(accountId)
                 .orElseThrow(() ->
                         new ResourceNotFoundException(
-                                "Account not found with id: " + accountId));
+                                "Account with id " + accountId + " was not found."));
 
         return transactionRepository
                 .findByAccountId(account.getId(), pageable)

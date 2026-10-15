@@ -1,6 +1,7 @@
 package com.pae.bankapp.service;
 
 import com.pae.bankapp.dto.TransferRequest;
+import com.pae.bankapp.dto.TransferResponse;
 import com.pae.bankapp.entity.Account;
 import com.pae.bankapp.entity.Transaction;
 import com.pae.bankapp.exception.InsufficientFundsException;
@@ -26,29 +27,23 @@ public class TransferService {
     }
 
     @Transactional
-    public void transfer(TransferRequest request) {
+    public TransferResponse transfer(TransferRequest request) {
 
-        // 1. Validar que origen y destino no sean la misma cuenta
-        if (request.getFromAccountId().equals(request.getToAccountId())) {
-            throw new InsufficientFundsException(
-                    "fromAccountId and toAccountId must be different");
-        }
-
-        // 2. Buscar ambas cuentas (o fallar con 404 si alguna no existe)
+        // 1. Buscar ambas cuentas (o fallar con 404 si alguna no existe)
         Account fromAccount = accountRepository.findById(request.getFromAccountId())
                 .orElseThrow(() -> new ResourceNotFoundException(
-                        "Account not found: " + request.getFromAccountId()));
+                        "Account with id " + request.getFromAccountId() + " was not found."));
 
         Account toAccount = accountRepository.findById(request.getToAccountId())
                 .orElseThrow(() -> new ResourceNotFoundException(
-                        "Account not found: " + request.getToAccountId()));
+                        "Account with id " + request.getToAccountId() + " was not found."));
 
         BigDecimal amount = request.getAmount();
 
         // 3. Validar saldo suficiente
         if (fromAccount.getBalance().compareTo(amount) < 0) {
             throw new InsufficientFundsException(
-                    "Insufficient funds in account " + fromAccount.getId());
+                    "Account with id " + fromAccount.getId() + " does not have enough balance for this transfer.");
         }
 
         // 4. Actualizar los saldos de ambas cuentas
@@ -75,5 +70,21 @@ public class TransferService {
 
         transactionRepository.save(outTransaction);
         transactionRepository.save(inTransaction);
+
+        return new TransferResponse(
+            "Transfer completed successfully from " + fromAccount.getUser().getName()
+                + " (" + fromAccount.getIban() + ") to " + toAccount.getUser().getName()
+                + " (" + toAccount.getIban() + ") for " + amount.toPlainString() + ".",
+            amount,
+            new TransferResponse.AccountDetails(
+                fromAccount.getId(),
+                fromAccount.getIban(),
+                fromAccount.getUser().getName(),
+                fromAccount.getBalance()),
+            new TransferResponse.AccountDetails(
+                toAccount.getId(),
+                toAccount.getIban(),
+                toAccount.getUser().getName(),
+                toAccount.getBalance()));
     }
 }

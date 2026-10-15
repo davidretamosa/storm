@@ -1,6 +1,7 @@
 package com.pae.bankapp.controller;
 
 import com.pae.bankapp.dto.TransferRequest;
+import com.pae.bankapp.dto.TransferResponse;
 import com.pae.bankapp.service.TransferService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -20,8 +21,7 @@ public class TransferController {
     }
 
     @PostMapping
-    public ResponseEntity<Void> transfer(@Valid @RequestBody TransferRequest request) {
-        transferService.transfer(request);
-        return ResponseEntity.ok().build();
+    public ResponseEntity<TransferResponse> transfer(@Valid @RequestBody TransferRequest request) {
+        return ResponseEntity.ok(transferService.transfer(request));
     }
 }
