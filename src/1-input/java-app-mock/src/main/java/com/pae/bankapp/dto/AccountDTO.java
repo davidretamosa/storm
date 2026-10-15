@@ -1,11 +1,10 @@
 package com.pae.bankapp.dto;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
-import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
-import jakarta.validation.constraints.NotNull;
 
 import java.math.BigDecimal;
 
@@ -18,7 +17,8 @@ public class AccountDTO {
     @JsonProperty(access = JsonProperty.Access.READ_ONLY)
     private Long id;
 
-    @NotBlank(message = "IBAN is required")
+    // Output only: the IBAN is generated automatically by the server
+    @JsonProperty(access = JsonProperty.Access.READ_ONLY)
     private String iban;
 
     @JsonProperty(access = JsonProperty.Access.READ_ONLY)
