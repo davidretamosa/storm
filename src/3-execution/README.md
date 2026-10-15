@@ -37,6 +37,9 @@ k8s/generar-plan.sh repo             # el modelo aprende de los logs de 1-input 
 k8s/lanzar-prueba.sh normal storm    # 3-execution: ejecuta ese plan contra la bankapp
 ```
 
+Si el grupo de 2-processing entrega un plan ya generado, se inyecta igual con
+`k8s/cargar-plan.sh plan.jmx` y `k8s/lanzar-prueba.sh normal storm`.
+
 Los planes de 2-processing no envían métricas a InfluxDB: el laboratorio les añade el envío
 automáticamente (`k8s/backend-listener.xml`), así que se ven en Grafana sin cambiar nada.
 
