@@ -63,6 +63,7 @@ def generate_jmx(
     port: int = 8080,
     path_params: Optional[dict] = None,
     bodies: Optional[dict] = None,
+    correlation: Optional[dict] = None,
 ) -> None:
     """Escribe el .jmx.
 
@@ -71,11 +72,13 @@ def generate_jmx(
     """
     path_params = path_params or {}
     bodies = bodies or {}
+    correlation = correlation or {}
     samplers = build_samplers(model["states"], bodies)
     # Cada {param} de las rutas se declara como variable del plan (valor por defecto 1)
     path_variables = sorted({name for s in samplers for name in s["params"]})
     model_json = json.dumps(
-        {**model, "think_time_ms": think_times, "path_params": path_params, "bodies": bodies},
+        {**model, "think_time_ms": think_times, "path_params": path_params, "bodies": bodies,
+         "correlation": correlation},
         ensure_ascii=False,
         separators=(",", ":"),
     )

@@ -1,6 +1,7 @@
 """SOLO PARA LA DEMO: servidor de prueba que hace de "app del banco" para recibir el tráfico de JMeter.
 
-No es la app real: responde a todo con un JSON vacío (GET -> 200, POST -> 201). Sirve para:
+No es la app real: responde a todo con un JSON (GET -> 200 con {}; POST -> 201 con {"id": 100, 101...},
+como si hubiera creado algo, para poder probar la correlación). Sirve para:
   1. Ver en directo cada petición que envía JMeter (con su pausa, sus ids y su body).
   2. Al parar (Ctrl+C), comparar el % de cada petición recibida con el % que había en el log:
      si el modelo funciona, deben parecerse (sin log, solo se enseña el % recibido).
@@ -26,6 +27,7 @@ from jar_parser.parser import parse_jar  # noqa: E402
 from log_parser.parser import parse_logs  # noqa: E402
 
 received = Counter()
+next_id = [100]  # ids que "crea" el servidor (como la app real, empieza en 100)
 lock = threading.Lock()
 start_time = time.time()
 
@@ -57,12 +59,19 @@ class Handler(BaseHTTPRequestHandler):
             seconds = time.time() - start_time
             print(f"[{seconds:6.1f}s] #{total:<4} {self.command:6} {self.path:32} {body}", flush=True)
 
-        status = 201 if self.command == "POST" else 200
+        if self.command == "POST":
+            with lock:
+                response = json.dumps({"id": next_id[0]}).encode()
+                next_id[0] += 1
+            status = 201
+        else:
+            response = b"{}"
+            status = 200
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", "2")
+        self.send_header("Content-Length", str(len(response)))
         self.end_headers()
-        self.wfile.write(b"{}")
+        self.wfile.write(response)
 
     do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = handle_request
 

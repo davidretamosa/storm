@@ -1,6 +1,7 @@
 
 // Tras cada petición: elige la siguiente según model.transitions y la pausa hasta ella
 def current = vars.get("stormState")
+rememberCreatedId(current, prev)     // correlación: ¿ha creado algo? apunta su id
 int steps = Integer.parseInt(vars.get("stormSteps")) + 1
 vars.put("stormSteps", String.valueOf(steps))
 

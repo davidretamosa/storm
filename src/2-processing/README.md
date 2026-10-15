@@ -307,7 +307,7 @@ Thread Group
 
 ## 7. Limitaciones conocidas (TODO)
 
-- **No hay correlación entre peticiones**: tras `POST /api/accounts`, el siguiente `deposit` usa un id visto en los logs, no el de la cuenta recién creada (habría que leerlo de la respuesta). Los campos de un body se generan por separado (`fromAccountId` puede coincidir con `toAccountId`) y los valores únicos (emails) se repiten.
+- **Correlación (hecha, versión sencilla):** cuando una petición crea algo (`POST /api/users`, `POST /api/accounts`…) y la app responde con `{"id": ...}`, JMeter **apunta ese id** y lo reutiliza en el resto de la sesión: en los `{id}` de las rutas de ese recurso (`/api/accounts/{id}/deposit`) y en los campos id del body (`userId`, `fromAccountId`; `toAccountId` no, porque es la cuenta de otro). Qué se relaciona con qué se deduce de las rutas (`traffic_model/correlation.py`). Si la respuesta no trae `id`, todo sigue como antes. Limitaciones: el id tiene que llamarse `id` y estar en la raíz del JSON; los valores únicos (emails) se siguen repitiendo.
 - **Los nombres de los campos de los `body` del log de ejemplo son supuestos**: hay que ajustarlos cuando estén los DTOs de `java-app-mock`.
 - **No hay perfil horario**: la intensidad es constante durante la prueba.
 - **`scaling.py`**: usuarios virtuales = pico real de sesiones a la vez (reproduce el peor momento del log). Para pruebas de estrés se sube al lanzar JMeter con `-Jvusers`.

@@ -261,7 +261,7 @@ Ejemplo (demo corta): `jmeter -n -t output/generated_scenario.jmx -Jvusers=10 -J
 > - **D2:** los endpoints que nadie usa salen con probabilidad pequeña gracias al prior del `.jar`.
 > - **D3:** si una petición no tiene bodies en los logs, se generan desde el DTO con un valor por tipo.
 >
-> Se dejan fuera **a propósito, por simplicidad**: reglas REST (lista → detalle…), correlación entre peticiones, leer validaciones de los DTOs (`@NotNull`, `@Email`…), `.war` y JAX-RS, logs de Tomcat/Apache sin `sessionId`, procesar miles de apps por lotes y autenticación. Son las mejoras naturales si ITNow pide más.
+> Se dejan fuera **a propósito, por simplicidad**: reglas REST (lista → detalle…), leer validaciones de los DTOs (`@NotNull`, `@Email`…), `.war` y JAX-RS, logs de Tomcat/Apache sin `sessionId`, procesar miles de apps por lotes y autenticación. Son las mejoras naturales si ITNow pide más.
 
 > ⚠️ **Lo más importante de esta guía.**
 
@@ -306,6 +306,8 @@ Cuando decidáis una, apuntad la decisión aquí y pasadla a la [sección 7](#7-
 **Hay que decidir también:** qué valores por defecto usar para cada tipo (número, texto, fecha, booleano).
 
 ### D4. Correlación entre peticiones
+
+> ✅ **Hecho (opción b, rama `feature/processing-correlacion`):** JMeter guarda el `id` que devuelve cada petición que crea algo y lo reutiliza en la sesión (rutas y campos id del body). Ver `traffic_model/correlation.py` y `rememberCreatedId` / `goTo` en `markov_common.groovy`.
 
 **Problema.** Cada petición se genera por separado. Si un usuario virtual crea una cuenta (`POST /api/accounts`) y después ingresa dinero, el ingreso va a **otra cuenta del log**, no a la que acaba de crear. Lo mismo con `fromAccountId` = `toAccountId`, o emails repetidos al crear usuarios (la app dará error de duplicado).
 

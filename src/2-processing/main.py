@@ -13,6 +13,7 @@ import numpy as np
 from jar_parser.parser import compare_with_logs, parse_jar
 from jmx_generator.generator import generate_jmx
 from log_parser.parser import parse_logs
+from traffic_model.correlation import build_correlation
 from traffic_model.markov import build_markov_model
 from traffic_model.payloads import build_body_models, build_path_params
 from traffic_model.scaling import predict_traffic_scale
@@ -70,11 +71,13 @@ def main() -> None:
     path_params = build_path_params(df_logs)
     bodies = build_body_models(df_logs, endpoints)
     profile = predict_traffic_scale(df_logs)
+    correlation = build_correlation(model, bodies)
     print(f"{len(model['states'])} estados en la cadena de Markov; {profile['vusers']} usuarios virtuales.")
     print(f"{len(path_params)} peticiones con parámetros de ruta; {len(bodies)} con cuerpo JSON.")
+    print(f"Correlación: {len(correlation['creates'])} peticiones crean algo; sus ids se reutilizan en la sesión.")
 
     print("--- 3. GENERACIÓN DEL ESCENARIO ---")
-    generate_jmx(model, think_times, profile, opts.output, opts.host, opts.port, path_params, bodies)
+    generate_jmx(model, think_times, profile, opts.output, opts.host, opts.port, path_params, bodies, correlation)
     print(f"Plan generado: {opts.output}")
 
 
