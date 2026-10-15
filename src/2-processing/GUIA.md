@@ -61,9 +61,11 @@ A partir de aquí **nadie vuelve a leer el archivo de log**: todos trabajan con 
 | Código | Recibe | Devuelve | Lo usa |
 |---|---|---|---|
 | `jar_parser/parser.py` → `parse_jar` | La **ruta del `.jar`** (opción `--jar`) | La **lista de endpoints** | `compare_with_logs` |
-| `jar_parser/parser.py` → `compare_with_logs` | Los endpoints + la tabla | Endpoints nunca usados / desconocidos | `main.py`, **solo para imprimirlos** |
+| `jar_parser/parser.py` → `compare_with_logs` | Los endpoints + la tabla | Endpoints nunca usados / desconocidos | `main.py`, para imprimirlos |
+| `traffic_model/markov.py` → `build_markov_model(..., endpoints=...)` | Los endpoints | Las "observaciones inventadas" del `.jar` (el prior) | El modelo |
+| `traffic_model/payloads.py` → `build_body_models(..., endpoints)` | Los endpoints | Bodies desde el DTO para las peticiones sin bodies en los logs | El modelo |
 
-> Ahora mismo **el `.jar` no influye en el `.jmx`**. Ver [decisión D1](#d1-papel-del-jar_parser).
+> `--logs` y `--jar` son opcionales (hace falta al menos uno). Cómo se combinan: `README.md`, sección 5.
 
 ### Quién recibe la **tabla** y qué saca
 
@@ -101,7 +103,7 @@ Para cada archivo: **qué hay que entender sí o sí** y **preguntas para compro
 ### 3.2 `main.py` — el director
 
 - Lee opciones de la terminal con `argparse` (ver [sección 4](#4-opciones-y-números-que-pueden-liar)).
-- Ejecuta: `parse_logs` → (opcional `parse_jar`) → las 5 funciones de `traffic_model` → `generate_jmx`.
+- Ejecuta: `parse_logs` (si hay `--logs`) y `parse_jar` (si hay `--jar`) → las 5 funciones de `traffic_model` → `generate_jmx`.
 - No calcula nada él mismo.
 
 ❓ *Si quiero que JMeter ataque a `bankapp:9090`, ¿qué opciones pongo?*
@@ -119,8 +121,10 @@ Para cada archivo: **qué hay que entender sí o sí** y **preguntas para compro
 - `get_steps`: añade `key` (`"GET /api/accounts/{id}"`) y `next_key` = lo siguiente que hizo **ese mismo usuario** (`groupby("session_id")` + `shift(-1)`). Sin el `groupby` se mezclarían usuarios.
 - `build_markov_model`:
   - `start`: con qué petición empiezan las sesiones (`groupby().first()` + `value_counts(normalize=True)`).
-  - `transitions`: los vacíos de `next_key` se rellenan con `END` (`fillna`) → `pd.crosstab(..., normalize="index")` cuenta las parejas y las pasa a probabilidades.
+  - `transitions`: los vacíos de `next_key` se rellenan con `END` (`fillna`) → `pd.crosstab` cuenta las parejas → `mix` las pasa a probabilidades (sumando el `.jar` si lo hay).
   - `states`: lista ordenada de todas las peticiones distintas.
+- `count_from_logs`: hace el conteo de los logs (inicios y parejas actual → siguiente).
+- `mix`: suma a los conteos de los logs las "observaciones inventadas" del `.jar` y lo pasa a probabilidades (ver `README.md`, sección 5).
 - `prune`: **opcional**, solo actúa con `--min-probability`.
 
 ❓ *¿Por qué hace falta `END`? ¿Qué devuelve `build_markov_model` y qué es cada clave?*
@@ -140,13 +144,16 @@ Para cada archivo: **qué hay que entender sí o sí** y **preguntas para compro
   - número normal (`amount`) → `number`: valor al azar entre el mínimo y el máximo vistos.
   - id (`fromAccountId`, `userId`…), texto u objeto → `choice`: uno de los valores vistos, según su frecuencia.
   - `presence`: en qué proporción de bodies aparece el campo.
-- Solo aprende de **lo que hay en el log** (ver [decisión D3](#d3-bodies-que-no-aparecen-en-los-logs)).
+- Con `--jar`: las peticiones **sin ningún body en los logs** lo generan desde su DTO (`add_bodies_from_dto`), con un valor por tipo (`default_field_model`). Si hay bodies en los logs, mandan los logs.
 
 ❓ *¿Por qué los ids no se generan "entre el mínimo y el máximo" como los importes?*
 
 ### 3.7 `traffic_model/scaling.py` — cuántos usuarios
 
-- Usuarios virtuales = sesiones distintas del log × **1,5**. Rampa 60 s, duración 300 s.
+- Usuarios virtuales = **pico de sesiones abiertas a la vez** en el log (`peak_concurrent_sessions`): el plan reproduce el peor momento real. Rampa 60 s, duración 300 s.
+- Por qué el pico y no el total de sesiones: el total crece con lo largo que sea el log (con la regla antigua, sesiones × 1,5, un log de una semana daba 315 usuarios en vez de 45); el pico solo depende del momento de más tráfico (3 en los dos casos).
+- No hay margen extra (antes ×1,5): reproducir y estresar son cosas distintas. Para estrés, `-Jvusers` al lanzar JMeter.
+- Sin logs: 10 usuarios (suposición).
 - Es una **regla provisional** (ver [decisión D5](#d5-cuántos-usuarios-virtuales-y-cuánto-tiempo)).
 
 ### 3.8 `jmx_generator/` — el plan de JMeter
@@ -198,8 +205,10 @@ Para cada archivo: **qué hay que entender sí o sí** y **preguntas para compro
 
 | Opción | Por defecto | Qué hace | ¿Cuándo tocarla? |
 |---|---|---|---|
-| `log_file` | — (obligatoria) | El log a analizar | Siempre |
-| `--jar` | no se usa | Lee el `.jar` y dice qué endpoints no salen en los logs. **No cambia el `.jmx`** | Para ver la cobertura de la API |
+| `--logs` | — | El log de la app | Si la app tiene logs |
+| `--jar` | — | El `.jar` de la app: añade al modelo los endpoints que existen y genera bodies desde los DTOs | Siempre que se tenga el `.jar` |
+| `--jar-weight` | `1` | Cuántas "observaciones inventadas" aporta el `.jar` por petición (1 = como una sesión más). Más alto = más uniforme | Si queréis probar más lo que nadie usa |
+| `--default-pause` | `1-3` | Pausa (s) al azar en ese rango cuando no hay pausas en los logs. `0-0` = sin pausa | Sin logs, o para una prueba de estrés |
 | `--output` | `output/generated_scenario.jmx` | Dónde se guarda el plan | Si queréis varios planes |
 | `--host`, `--port` | `localhost`, `8080` | A qué servidor atacará JMeter. Se puede cambiar también al lanzar JMeter: `-Jhost=... -Jport=...` | Cuando se sepa dónde está la app en Kubernetes |
 
@@ -208,7 +217,7 @@ Para cada archivo: **qué hay que entender sí o sí** y **preguntas para compro
 | Opción | Por defecto | Qué hace |
 |---|---|---|
 | `-Jhost=...`, `-Jport=...` | Los de `main.py` | Servidor al que se envían las peticiones |
-| `-Jvusers=...` | El de `scaling.py` (45 con la demo) | Usuarios virtuales |
+| `-Jvusers=...` | El de `scaling.py` (3 con la demo) | Usuarios virtuales |
 | `-Jrampup=...` | 60 | Segundos para arrancar a todos los usuarios |
 | `-Jduration=...` | 300 | Duración de la prueba en segundos |
 
@@ -222,7 +231,8 @@ Ejemplo (demo corta): `jmeter -n -t output/generated_scenario.jmx -Jvusers=10 -J
 |---|---|---|
 | `samples=20` | `think_time.py` | Cuántos cuantiles se guardan de las pausas de cada transición |
 | `max_ms=120_000` | `think_time.py` | Pausa máxima: 2 minutos. Si alguien tardó más, se cuenta como 2 min |
-| `growth_factor=1.5` | `scaling.py` | Usuarios virtuales = sesiones del log × 1,5 |
+| `DEFAULT_VUSERS=10` | `scaling.py` | Usuarios virtuales cuando no hay logs |
+| `DEFAULT_PAUSE_MS` (1–3 s) | `think_time.py` | Pausa cuando no hay datos (se cambia con `--default-pause`) |
 | `ramp_up_seconds=60` | `scaling.py` | JMeter tarda 60 s en arrancar a todos los usuarios virtuales (no todos a la vez) |
 | `duration_seconds=300` | `scaling.py` | La prueba dura 5 minutos |
 | `MAX_VALUES=50` | `payloads.py` | Para cada `{id}` o campo de texto se guardan como mucho los 50 valores más frecuentes |
@@ -245,6 +255,13 @@ Ejemplo (demo corta): `jmeter -n -t output/generated_scenario.jmx -Jvusers=10 -J
 ---
 
 ## 6. DECISIONES QUE TENEMOS QUE TOMAR
+
+> **Actualización (rama `feature/processing-sencillo`):** ITNow pidió hacerlo **lo más sencillo posible**. D1, D2 y D3 quedan resueltas así (ver sección 7):
+> - **D1:** el `.jar` alimenta el modelo (prior + bodies desde el DTO).
+> - **D2:** los endpoints que nadie usa salen con probabilidad pequeña gracias al prior del `.jar`.
+> - **D3:** si una petición no tiene bodies en los logs, se generan desde el DTO con un valor por tipo.
+>
+> Se dejan fuera **a propósito, por simplicidad**: reglas REST (lista → detalle…), leer validaciones de los DTOs (`@NotNull`, `@Email`…), `.war` y JAX-RS, logs de Tomcat/Apache sin `sessionId`, procesar miles de apps por lotes y autenticación. Son las mejoras naturales si ITNow pide más.
 
 > ⚠️ **Lo más importante de esta guía.**
 
@@ -290,6 +307,8 @@ Cuando decidáis una, apuntad la decisión aquí y pasadla a la [sección 7](#7-
 
 ### D4. Correlación entre peticiones
 
+> ✅ **Hecho (opción b, rama `feature/processing-correlacion`):** JMeter guarda el `id` que devuelve cada petición que crea algo y lo reutiliza en la sesión (rutas y campos id del body). Ver `traffic_model/correlation.py` y `rememberCreatedId` / `goTo` en `markov_common.groovy`.
+
 **Problema.** Cada petición se genera por separado. Si un usuario virtual crea una cuenta (`POST /api/accounts`) y después ingresa dinero, el ingreso va a **otra cuenta del log**, no a la que acaba de crear. Lo mismo con `fromAccountId` = `toAccountId`, o emails repetidos al crear usuarios (la app dará error de duplicado).
 
 | Opción | Qué implica |
@@ -303,7 +322,9 @@ Cuando decidáis una, apuntad la decisión aquí y pasadla a la [sección 7](#7-
 
 ### D5. Cuántos usuarios virtuales y cuánto tiempo
 
-**Problema.** Ahora es una regla fija heredada del código de Gemini: sesiones del log × 1,5, durante 5 minutos. No tiene ninguna base.
+> ✅ **Hecho (opción a + b):** usuarios = pico real de sesiones a la vez, y se puede cambiar con `-Jvusers` (p. ej. para estrés). Antes era "sesiones del log × 1,5", que crecía con lo largo del log; el 1,5 se ha quitado porque no tenía justificación.
+
+**Problema (original).** Era una regla fija heredada del código de Gemini: sesiones del log × 1,5, durante 5 minutos. No tenía ninguna base.
 
 | Opción | Qué implica |
 |---|---|
@@ -348,6 +369,10 @@ Cuando decidáis una, apuntad la decisión aquí y pasadla a la [sección 7](#7-
 
 **Recomendación:** a) para la primera versión; c) es una mejora natural (tipos de usuario: "el que solo consulta", "el que transfiere"…).
 
+### Hecho: inicio de sesión (antes "autenticación", P2)
+
+> ✅ **Rama `feature/processing-correlacion`.** La app del banco pide `POST /api/sessions {"userId": …}` y la cabecera `X-Session-Id` en todas las peticiones (si no, 400). Con `--session`, el plan lo hace al empezar cada sesión simulada (`traffic_model/session.py`, `login_response.groovy`). Las peticiones de sesión se quitan del modelo para que no salgan al azar a mitad de sesión.
+
 ### D9. Qué le entregamos a `3-execution`
 
 **Problema.** Hay que acordar con ellos el formato de entrega.
@@ -369,7 +394,9 @@ Cuando decidáis una, apuntad la decisión aquí y pasadla a la [sección 7](#7-
 | Librería de datos | **pandas** (lo piden las diapositivas) |
 | Rama de trabajo | Una sola para el grupo: `feature/processing` |
 | Demo | Independiente de las demás carpetas, con los datos de `samples/` |
-| `jar_parser` | Lee el bytecode desde Python (sin `javap`) y de momento **solo informa** (ver D1) |
+| `jar_parser` | Lee el bytecode desde Python (sin `javap`) |
+| Combinar logs y `.jar` | Prior uniforme del `.jar` (`--jar-weight 1`) + bodies desde el DTO si no hay en los logs (D1, D2, D3) |
+| Sin logs | Pausa al azar de 1–3 s (`--default-pause`) y 10 usuarios virtuales (`-Jvusers`): **suposiciones**, no datos |
 | `--min-probability` | Por defecto `0`: no se quita nada del modelo |
 
 ---

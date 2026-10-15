@@ -5,6 +5,7 @@
 //   stormThinkMs pausa antes de la siguiente petición
 //   stormBody    cuerpo JSON de la petición actual ("" si no lleva)
 //   <param>      valor de cada {param} de la ruta de la petición actual
+//   stormIds     (objeto) ids que la app ha devuelto en esta sesión: {"/api/accounts": 47, ...}
 import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import java.math.RoundingMode
@@ -67,15 +68,57 @@ def buildBody = { Map fields ->
     return body
 }
 
+// Correlación: qué crea cada petición y qué ids pueden reutilizar lo creado (traffic_model/correlation.py)
+def correlation = model.correlation ?: [:]
+
 // Prepara la petición: índice para el Switch, parámetros de ruta y cuerpo
 def goTo = { String state ->
     vars.put("stormState", state)
     vars.put("stormIndex", String.valueOf(model.states.indexOf(state)))
+    def ids = vars.getObject("stormIds") ?: [:]
+
+    // {id} de la ruta: uno de los vistos en los logs (o 1)...
     def params = model.path_params[state] ?: [:]
     for (param in params) {
         def value = param.value ? pickValue(param.value) : 1
         vars.put(param.key, String.valueOf(value))
     }
+    // ...salvo que en esta sesión la app nos haya dado uno de ese recurso: entonces, ese
+    for (link in (correlation.path_resources?.get(state) ?: [:])) {
+        if (ids[link.value] != null) {
+            vars.put(link.key, String.valueOf(ids[link.value]))
+        }
+    }
+
     def bodyModel = model.bodies[state]
-    vars.put("stormBody", bodyModel ? JsonOutput.toJson(buildBody(bodyModel)) : "")
+    if (bodyModel) {
+        def body = buildBody(bodyModel)
+        // Lo mismo con los ids del body (p. ej. userId, fromAccountId)
+        for (link in (correlation.body_resources?.get(state) ?: [:])) {
+            if (body.containsKey(link.key) && ids[link.value] != null) {
+                body[link.key] = ids[link.value]
+            }
+        }
+        vars.put("stormBody", JsonOutput.toJson(body))
+    } else {
+        vars.put("stormBody", "")
+    }
+}
+
+// Si la petición que acaba de hacerse creaba algo, apunta el id que ha devuelto la app
+def rememberCreatedId = { String state, def result ->
+    def resource = correlation.creates?.get(state)
+    if (!resource || !result.isSuccessful()) {
+        return
+    }
+    try {
+        def response = new JsonSlurper().parseText(result.getResponseDataAsString())
+        if (response instanceof Map && response.id != null) {
+            def ids = vars.getObject("stormIds") ?: [:]
+            ids[resource] = response.id
+            vars.putObject("stormIds", ids)
+        }
+    } catch (Exception ignored) {
+        // respuesta vacía o que no es JSON: no hay id que apuntar
+    }
 }

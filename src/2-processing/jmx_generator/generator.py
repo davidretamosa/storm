@@ -63,6 +63,8 @@ def generate_jmx(
     port: int = 8080,
     path_params: Optional[dict] = None,
     bodies: Optional[dict] = None,
+    correlation: Optional[dict] = None,
+    session: Optional[dict] = None,
 ) -> None:
     """Escribe el .jmx.
 
@@ -71,11 +73,13 @@ def generate_jmx(
     """
     path_params = path_params or {}
     bodies = bodies or {}
+    correlation = correlation or {}
     samplers = build_samplers(model["states"], bodies)
     # Cada {param} de las rutas se declara como variable del plan (valor por defecto 1)
     path_variables = sorted({name for s in samplers for name in s["params"]})
     model_json = json.dumps(
-        {**model, "think_time_ms": think_times, "path_params": path_params, "bodies": bodies},
+        {**model, "think_time_ms": think_times, "path_params": path_params, "bodies": bodies,
+         "correlation": correlation, "session": session},
         ensure_ascii=False,
         separators=(",", ":"),
     )
@@ -96,6 +100,8 @@ def generate_jmx(
         path_variables=path_variables,
         session_start_script=_groovy("session_start.groovy", model_json),
         next_request_script=_groovy("next_request.groovy", model_json),
+        session=session,
+        login_response_script=_groovy("login_response.groovy", model_json) if session else "",
     )
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     Path(output_path).write_text(rendered, encoding="utf-8")
