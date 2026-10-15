@@ -30,12 +30,13 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 6
+          # En las pruebas pico y estrés llegó a ~1-1,4 GB: con 1Gi iba justa
           resources:
             requests:
               cpu: 500m
               memory: 512Mi
             limits:
-              memory: 1Gi
+              memory: 2Gi
 ---
 apiVersion: v1
 kind: Service
