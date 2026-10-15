@@ -9,7 +9,12 @@ NS=lab-jmeter
 
 echo "1/4 Construyendo las imágenes locales (lab-app y lab-jmeter)..."
 docker build -q -t lab-app "$LAB/app" >/dev/null
-docker build -q -t lab-jmeter "$LAB/jmeter" >/dev/null
+# La imagen de JMeter no cambia y construirla implica descargar JMeter (~90 MB):
+# solo se construye si falta. Para forzarlo: docker rmi lab-jmeter
+if ! docker image inspect lab-jmeter:latest >/dev/null 2>&1; then
+  echo "   (descargando JMeter, solo la primera vez: unos minutos)"
+  docker build -q -t lab-jmeter "$LAB/jmeter" >/dev/null
+fi
 
 echo "2/4 Creando el namespace y los ConfigMaps (plan.jmx y Grafana)..."
 kubectl apply -f 00-namespace.yaml
