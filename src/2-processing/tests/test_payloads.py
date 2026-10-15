@@ -25,6 +25,12 @@ def test_path_params_several_and_frequency():
     assert params == {"userId": [["7", 1.0]], "id": [["3", 0.5], ["4", 0.5]]}
 
 
+def test_path_params_ignore_query_string():
+    # En los logs de la app del banco: /api/accounts/1/transactions?page=0&size=10
+    df = requests(("GET", "/api/accounts/{id}/transactions", "/api/accounts/1/transactions?page=0&size=10", None))
+    assert build_path_params(df) == {"GET /api/accounts/{id}/transactions": {"id": [["1", 1.0]]}}
+
+
 def test_body_models_numbers_ids_and_choices():
     df = requests(
         ("POST", "/api/transfers", "/api/transfers", {"fromAccountId": 1, "amount": 10.5, "concept": "a"}),

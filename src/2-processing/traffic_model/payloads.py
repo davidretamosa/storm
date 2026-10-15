@@ -84,6 +84,7 @@ def build_path_params(df):
         for name in params:
             values[name] = []
         for path in group["path"].dropna():          # "/api/accounts/3", "/api/accounts/4"...
+            path = path.split("?")[0]                # "/api/accounts/1/transactions?page=0" -> sin "?page=0"
             match = regex.match(path)
             if match:
                 for name in params:
