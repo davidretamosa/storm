@@ -17,6 +17,7 @@ from traffic_model.correlation import build_correlation
 from traffic_model.markov import build_markov_model
 from traffic_model.payloads import build_body_models, build_path_params
 from traffic_model.scaling import predict_traffic_scale
+from traffic_model.session import build_session_config, remove_session_requests
 from traffic_model.think_time import add_default_pauses, build_think_times
 
 
@@ -41,10 +42,19 @@ def main() -> None:
                       help="pausa (s) cuando no hay datos en los logs, p. ej. 1-3; 0-0 = sin pausa")
     args.add_argument("--min-probability", type=float, default=0.0, help="descarta transiciones menos probables")
     args.add_argument("--max-steps", type=int, default=50, help="máximo de peticiones por sesión simulada")
+    args.add_argument("--session", action="store_true",
+                      help="la app pide iniciar sesión (POST /api/sessions + cabecera X-Session-Id), como la del banco")
+    args.add_argument("--session-endpoint", default="/api/sessions",
+                      help="ruta del POST que inicia sesión, si no es /api/sessions")
+    args.add_argument("--session-users",
+                      help="usuarios con los que iniciar sesión, p. ej. 1,2,3 (por defecto, los de los logs)")
     opts = args.parse_args()
 
     if not opts.logs and not opts.jar:
         args.error("hace falta --logs, --jar o los dos")
+    # Git Bash convierte "/api/..." en "C:/Program Files/Git/api/...": se deshace
+    if ":" in opts.session_endpoint and "/api/" in opts.session_endpoint:
+        opts.session_endpoint = opts.session_endpoint[opts.session_endpoint.index("/api/"):]
 
     print("--- 1. LECTURA ---")
     df_logs = None
@@ -64,6 +74,16 @@ def main() -> None:
         for request in coverage["unknown"]:
             print(f"  - En los logs pero no en el .jar: {request}")
 
+    # Si la app pide iniciar sesión, JMeter lo hará al principio de cada sesión:
+    # las peticiones de sesión no forman parte del modelo
+    session = None
+    if opts.session:
+        users = [int(u) for u in opts.session_users.split(",")] if opts.session_users else None
+        session = build_session_config(opts.session_endpoint, df_logs, users)
+        df_logs, endpoints = remove_session_requests(df_logs, endpoints, opts.session_endpoint)
+        print(f"Inicio de sesión: POST {opts.session_endpoint} con userId en "
+              f"{[u for u, _ in session['users']]}; cabecera {session['header']}.")
+
     print("--- 2. MODELADO DEL TRÁFICO ---")
     model = build_markov_model(df_logs, opts.min_probability, opts.max_steps,
                                endpoints=endpoints, jar_weight=opts.jar_weight)
@@ -77,7 +97,8 @@ def main() -> None:
     print(f"Correlación: {len(correlation['creates'])} peticiones crean algo; sus ids se reutilizan en la sesión.")
 
     print("--- 3. GENERACIÓN DEL ESCENARIO ---")
-    generate_jmx(model, think_times, profile, opts.output, opts.host, opts.port, path_params, bodies, correlation)
+    generate_jmx(model, think_times, profile, opts.output, opts.host, opts.port, path_params, bodies, correlation,
+                 session)
     print(f"Plan generado: {opts.output}")
 
 

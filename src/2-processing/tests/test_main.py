@@ -22,3 +22,11 @@ def test_main_needs_logs_or_jar(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["main.py"])
     with pytest.raises(SystemExit):
         main.main()
+
+
+def test_main_with_session_login(tmp_path, monkeypatch):
+    output = tmp_path / "plan.jmx"
+    monkeypatch.setattr(sys, "argv", ["main.py", "--logs", LOG, "--jar", JAR, "--session", "--session-users", "1,2,3",
+                                      "--output", str(output)])
+    main.main()
+    assert "Iniciar sesión" in output.read_text(encoding="utf-8")

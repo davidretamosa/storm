@@ -61,7 +61,7 @@ def test_markov_scripts_embed_model(tmp_path):
 
     embedded = re.search(r"parseText\('''(.*?)'''\)", scripts["JSR223PostProcessor"], re.S).group(1)
     assert json.loads(embedded) == {**MODEL, "think_time_ms": THINK_TIMES, "path_params": PATH_PARAMS, "bodies": BODIES,
-                                    "correlation": {}}
+                                    "correlation": {}, "session": None}
     # JMeter sustituye ${...} en los scripts: no puede aparecer ninguno
     assert all("${" not in script for script in scripts.values())
 

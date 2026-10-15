@@ -44,6 +44,14 @@ def to_endpoint(path, endpoints):
 
 class Handler(BaseHTTPRequestHandler):
     endpoints = []
+    require_session = False  # --require-session: como la app del banco, sin X-Session-Id -> 400
+
+    def reply(self, status, response):
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(response)))
+        self.end_headers()
+        self.wfile.write(response)
 
     def handle_request(self):
         length = int(self.headers.get("Content-Length") or 0)
@@ -52,6 +60,21 @@ class Handler(BaseHTTPRequestHandler):
             body = json.dumps(json.loads(body), ensure_ascii=False)
         except ValueError:
             pass
+        # Inicio de sesión (POST /api/sessions): devuelve un identificador de sesión
+        if self.path.startswith("/api/sessions"):
+            with lock:
+                session_id = f"sess-{next_id[0]}"
+                next_id[0] += 1
+                print(f"          inicio de sesión  {body}  ->  {session_id}", flush=True)
+            self.reply(201, json.dumps({"sessionId": session_id}).encode())
+            return
+        # El "portero": sin sesión no se entra (como la app real)
+        if self.require_session and not self.headers.get("X-Session-Id"):
+            with lock:
+                received["SIN SESIÓN (400)"] += 1
+            self.reply(400, b'{"error": "Missing X-Session-Id"}')
+            return
+
         key = self.command + " " + to_endpoint(self.path, self.endpoints)
         with lock:  # varios usuarios a la vez: una línea cada vez para que no se mezclen
             received[key] += 1
@@ -63,15 +86,9 @@ class Handler(BaseHTTPRequestHandler):
             with lock:
                 response = json.dumps({"id": next_id[0]}).encode()
                 next_id[0] += 1
-            status = 201
+            self.reply(201, response)
         else:
-            response = b"{}"
-            status = 200
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(response)))
-        self.end_headers()
-        self.wfile.write(response)
+            self.reply(200, b"{}")
 
     do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = handle_request
 
@@ -101,6 +118,8 @@ def main():
     args.add_argument("--jar", help=".jar con el que se generó el .jmx (para reconocer sus endpoints)")
     args.add_argument("--port", type=int, default=8080)
     args.add_argument("--stop-after", type=int, help="parar solo tras estos segundos (si no, Ctrl+C)")
+    args.add_argument("--require-session", action="store_true",
+                      help="como la app del banco: rechaza (400) las peticiones sin cabecera X-Session-Id")
     opts = args.parse_args()
 
     df = parse_logs(opts.logs) if opts.logs else None
@@ -109,6 +128,7 @@ def main():
         known |= {e["endpoint"] for e in parse_jar(opts.jar)}
     # Los más largos primero, para que /api/accounts/{id}/deposit no se confunda con /api/accounts/{id}
     Handler.endpoints = sorted(known, key=len, reverse=True)
+    Handler.require_session = opts.require_session
 
     server = ThreadingHTTPServer(("127.0.0.1", opts.port), Handler)
     print(f"Servidor de prueba escuchando en http://localhost:{opts.port}  (Ctrl+C para parar y ver el resumen)")

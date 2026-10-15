@@ -129,6 +129,9 @@ Lee las opciones de la terminal y ejecuta los 3 pasos. No calcula nada: solo lla
 | `--jar` | — | El `.jar` de la app (qué endpoints y bodies existen) |
 | | | **Hace falta al menos uno de los dos** |
 | `--jar-weight` | `1` | Cuánto pesa el `.jar` al mezclarlo con los logs: `1` = como una sesión más (ver sección 5) |
+| `--session` | no | La app pide **iniciar sesión** (como la del banco): al empezar cada sesión, JMeter hace `POST /api/sessions` y pone el `sessionId` en la cabecera `X-Session-Id` de todas las peticiones |
+| `--session-users` | los `userId` de los logs (o `1`) | Con qué usuarios se inicia sesión, p. ej. `1,2,3` (tienen que existir en la app) |
+| `--session-endpoint` | `/api/sessions` | Ruta del inicio de sesión, si es otra |
 | `--default-pause` | `1-3` | Pausa en segundos (al azar en ese rango) cuando no hay datos en los logs. `0-0` = sin pausa |
 | `--output` | `output/generated_scenario.jmx` | Dónde se guarda el plan |
 | `--host`, `--port` | `localhost`, `8080` | Contra qué servidor lanzará JMeter las peticiones |

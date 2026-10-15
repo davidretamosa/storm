@@ -369,6 +369,10 @@ Cuando decidáis una, apuntad la decisión aquí y pasadla a la [sección 7](#7-
 
 **Recomendación:** a) para la primera versión; c) es una mejora natural (tipos de usuario: "el que solo consulta", "el que transfiere"…).
 
+### Hecho: inicio de sesión (antes "autenticación", P2)
+
+> ✅ **Rama `feature/processing-correlacion`.** La app del banco pide `POST /api/sessions {"userId": …}` y la cabecera `X-Session-Id` en todas las peticiones (si no, 400). Con `--session`, el plan lo hace al empezar cada sesión simulada (`traffic_model/session.py`, `login_response.groovy`). Las peticiones de sesión se quitan del modelo para que no salgan al azar a mitad de sesión.
+
 ### D9. Qué le entregamos a `3-execution`
 
 **Problema.** Hay que acordar con ellos el formato de entrega.
