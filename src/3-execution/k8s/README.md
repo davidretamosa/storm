@@ -54,21 +54,20 @@ objetivo (`criterios/app.properties` y `criterios/bankapp.properties`):
 
 | Criterio | app | bankapp |
 |---|---|---|
-| `MAX_ERRORES_PCT`: % máximo de errores de **cada** operación | 1 % | 0,1 % |
+| `MAX_ERRORES_PCT`: % máximo de **errores del servidor** de cada operación | 1 % | 0,1 % |
 | `MAX_P95_MS`: el 95 % de las peticiones debe responder en menos de | 1000 ms | 500 ms |
 
-Al acabar, JMeter muestra una tabla por operación (peticiones, % de errores y tiempo medio)
-y marca la que supera el límite. Si la prueba no se supera, el Job queda en estado
-`Failed` y `lanzar-prueba.sh` termina con código 1, así que también sirve para
-automatizarlo. La evaluación la hace `ejecutar-y-evaluar.sh` dentro del pod de JMeter.
+Se distinguen dos tipos de respuesta fallida:
 
-Ejemplo real (escenario `normal` contra la bankapp):
+| Tipo | Ejemplos | ¿Cuenta para el veredicto? |
+|---|---|---|
+| **Error del servidor**: 5xx o sin respuesta | deadlock (500), app caída, timeout | **Sí**: es un fallo de la app |
+| **Rechazo (4xx)** | saldo insuficiente, datos inválidos, cuenta inexistente | **No**: la app responde bien a un error del usuario; se muestra como información |
 
-```
-[FALLO] Errores: "POST /api/transfers" tiene un 0.30 %, el máximo es 0.1 %
-[OK]    Tiempo: el 95 % de las peticiones responde en 56 ms o menos (máximo 500 ms)
-VEREDICTO: PRUEBA NO SUPERADA
-```
+Al acabar, JMeter muestra una tabla por operación (peticiones, errores del servidor, rechazos y
+tiempo medio) y marca la que supera el límite. Si la prueba no se supera, el Job queda en estado
+`Failed` y `lanzar-prueba.sh` termina con código 1, así que también sirve para automatizarlo.
+La evaluación la hace `ejecutar-y-evaluar.sh` dentro del pod de JMeter.
 
 ## Resultados de cada prueba
 

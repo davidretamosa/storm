@@ -5,8 +5,15 @@
 #
 # Argumentos: los de jmeter. Variables de entorno:
 #   RESULTADOS       carpeta de esta prueba (en el disco jmeter-resultados)
-#   MAX_ERRORES_PCT  % máximo de errores que puede tener CADA operación   (criterios/)
+#   MAX_ERRORES_PCT  % máximo de errores del servidor de CADA operación  (criterios/)
 #   MAX_P95_MS       el 95 % de todas las peticiones debe responder en menos de esto (ms)
+#
+# Dos tipos de respuesta fallida:
+#   error del servidor  5xx o sin respuesta (app caída, conexión rechazada, timeout):
+#                       es un fallo de la app y cuenta para el veredicto
+#   rechazo (4xx)       la app rechaza la petición porque el usuario se equivoca (saldo
+#                       insuficiente, datos inválidos...): es la app funcionando bien, se
+#                       muestra como información pero no suspende la prueba
 JTL="$RESULTADOS/resultados.jtl"
 VEREDICTO="$RESULTADOS/veredicto.txt"
 mkdir -p "$RESULTADOS"
@@ -42,18 +49,23 @@ evaluar() {
     {
       op = $col["label"]; ms = $col["elapsed"]
       n[op]++; total++; suma[op] += ms
-      if ($col["success"] != "true") { err[op]++; errores++ }
+      if ($col["success"] != "true") {
+        if ($col["responseCode"] ~ /^4[0-9][0-9]$/) { rech[op]++; rechazos++ }
+        else { err[op]++; errores++ }
+      }
       print ms > tiempos
     }
     END {
       printf "=== RESULTADO DE LA PRUEBA ===\n"
-      printf "%-40s %10s %9s %10s\n", "Operación", "Peticiones", "Errores", "Media"
+      printf "%-40s %10s %16s %13s %10s\n", "Operación", "Peticiones", "Errores servidor", "Rechazos 4xx", "Media"
       for (op in n) {
         pct = 100 * err[op] / n[op]
-        printf "%-40s %10d %8.2f%% %8.0f ms%s\n", op, n[op], pct, suma[op] / n[op], (pct > max_err ? "  <-- supera el límite" : "")
+        printf "%-40s %10d %15.2f%% %12.2f%% %8.0f ms%s\n", op, n[op], pct, 100 * rech[op] / n[op], suma[op] / n[op], (pct > max_err ? "  <-- supera el límite" : "")
         if (pct > peor_pct) { peor_pct = pct; peor_op = op }
       }
-      printf "%-40s %10d %8.2f%%\n", "TOTAL", total, 100 * errores / total
+      printf "%-40s %10d %15.2f%% %12.2f%%\n", "TOTAL", total, 100 * errores / total, 100 * rechazos / total
+      printf "(Errores servidor: 5xx o sin respuesta; cuentan para el veredicto. Rechazos 4xx: la app\n"
+      printf " rechaza un error del usuario, como saldo insuficiente; es correcto y solo es informativo.)\n"
       # Para el veredicto: peor % de errores y la operación que lo tiene
       printf "%.4f|%s\n", peor_pct, peor_op > "/tmp/peor.txt"
     }' "$JTL"
@@ -66,9 +78,9 @@ evaluar() {
   echo "=== CRITERIOS DE APROBADO ==="
   SUPERADA=si
   if awk -v a="$PEOR_PCT" -v b="$MAX_ERRORES_PCT" 'BEGIN { exit !(a <= b) }'; then
-    printf "[OK]    Errores: ninguna operación pasa del %s %% (la peor: %.2f %%)\n" "$MAX_ERRORES_PCT" "$PEOR_PCT"
+    printf "[OK]    Errores del servidor: ninguna operación pasa del %s %% (la peor: %.2f %%)\n" "$MAX_ERRORES_PCT" "$PEOR_PCT"
   else
-    printf "[FALLO] Errores: \"%s\" tiene un %.2f %%, el máximo es %s %%\n" "$PEOR_OP" "$PEOR_PCT" "$MAX_ERRORES_PCT"
+    printf "[FALLO] Errores del servidor: \"%s\" tiene un %.2f %%, el máximo es %s %%\n" "$PEOR_OP" "$PEOR_PCT" "$MAX_ERRORES_PCT"
     SUPERADA=no
   fi
   if [ "$P95" -le "$MAX_P95_MS" ]; then
