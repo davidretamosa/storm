@@ -10,6 +10,10 @@ bankapp + logs ──▶ genera el plan .jmx ──▶ JMeter lo ejecuta contra 
                                             └─▶ InfluxDB / Prometheus ──▶ Grafana + veredicto
 ```
 
+Las tres partes ya funcionan enlazadas en el Kubernetes del equipo local: la bankapp
+(1-input) y el generador (2-processing) se compilan desde sus ramas de Git y se ejecutan
+dentro del clúster junto al laboratorio.
+
 ## Las carpetas
 
 | Carpeta | Qué es | Cuándo usarla |
@@ -17,9 +21,24 @@ bankapp + logs ──▶ genera el plan .jmx ──▶ JMeter lo ejecuta contra 
 | [`k8s/`](k8s/README.md) | **Laboratorio en Kubernetes** (el principal): escenarios, criterios de aprobado, resultados guardados por prueba, CPU y memoria por pod | Para las pruebas de verdad y la demo |
 | [`lab-jmeter/`](lab-jmeter/README.md) | Laboratorio con Docker Compose: la versión sencilla, con una app de prueba | Para entender el laboratorio o probar algo rápido. `k8s/` reutiliza sus piezas |
 | [`bankapp/`](bankapp/README.md) | Compila la bankapp de `1-input` y su plan de prueba provisional | Lo usa `k8s/` para probar la aplicación real |
+| `generador/` | Empaqueta el generador de planes de `2-processing` (`construir-imagen.sh`) | Lo usa `k8s/generar-plan.sh` |
 | `docker/` | Vacía (estructura inicial del repositorio) | — |
 
-## Empezar en 3 comandos
+## Prueba de punta a punta (las tres partes)
+
+```bash
+cd src/3-execution
+bankapp/construir-imagen.sh          # 1-input: compila la bankapp desde su rama
+generador/construir-imagen.sh        # 2-processing: empaqueta el generador desde su rama
+k8s/desplegar.sh                     # levanta el laboratorio con la bankapp
+k8s/generar-plan.sh                  # el generador lee el .jar de la bankapp y crea el plan
+k8s/lanzar-prueba.sh normal storm    # 3-execution: ejecuta ese plan contra la bankapp
+```
+
+Los planes de 2-processing no envían métricas a InfluxDB: el laboratorio les añade el envío
+automáticamente (`k8s/backend-listener.xml`), así que se ven en Grafana sin cambiar nada.
+
+## Empezar en 3 comandos (plan provisional)
 
 Requisito: Docker Desktop con Kubernetes activado (*Settings → Kubernetes*). En Windows, desde
 Git Bash:
@@ -50,9 +69,10 @@ El plan que genera `2-processing` se ejecuta tal cual: este laboratorio usa sus 
 propiedades (`vusers`, `rampup`, `duration`, `host`, `port`). Mientras no esté integrado, la
 bankapp se prueba con un plan provisional escrito a mano (`bankapp/plan-bankapp.jmx`).
 
-Pendiente de acordar con 2-processing:
-- dónde deja el `.jmx` generado (propuesta: `bankapp/plan-bankapp.jmx`);
-- el envío de métricas a InfluxDB (Backend Listener), que su plantilla aún no incluye.
+El generador se ejecuta dentro del clúster (`k8s/generar-plan.sh`) y su plan se lanza con el
+objetivo `storm`. Sin logs reales de la bankapp, el generador rellena los cuerpos con valores
+de ejemplo (`"test"`, ids `1`), y la app rechaza algunas peticiones (email inválido,
+transferencia a la misma cuenta, retirada sin saldo). Con los logs reales esto desaparece.
 
 ## Estado
 
@@ -61,5 +81,6 @@ Pendiente de acordar con 2-processing:
 - [x] Escenarios humo, normal, pico y estrés
 - [x] Bankapp real desplegada y probada
 - [x] Criterios de aprobado y resultados guardados por prueba
-- [ ] Ejecutar el plan generado por 2-processing (prueba de punta a punta)
+- [x] Ejecutar el plan generado por 2-processing (prueba de punta a punta)
+- [ ] Generar el plan con los logs reales de la bankapp (cuando los produzca)
 - [ ] JMeter distribuido (varios pods) para cargas muy grandes

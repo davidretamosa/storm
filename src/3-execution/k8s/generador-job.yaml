@@ -1,0 +1,52 @@
+# Genera el plan de prueba con el generador de 2-processing (imagen storm-generador),
+# leyendo el .jar de la bankapp que está desplegada. Lo lanza ./generar-plan.sh.
+#
+#   initContainer: copia el .jar de la imagen bankapp a una carpeta compartida
+#   generador:     main.py --jar ... --session -> /resultados/planes/storm.jmx
+#
+# El plan queda en el disco jmeter-resultados; generar-plan.sh lo convierte en el
+# ConfigMap jmeter-plan-storm, que es el que usa ./lanzar-prueba.sh <escenario> storm.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: generador
+  namespace: lab-jmeter
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app: generador
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: copiar-jar
+          image: bankapp:latest
+          imagePullPolicy: Never
+          command: ["cp", "/app/app.jar", "/trabajo/bankapp.jar"]
+          volumeMounts:
+            - name: trabajo
+              mountPath: /trabajo
+      containers:
+        - name: generador
+          image: storm-generador:latest
+          imagePullPolicy: Never
+          # La bankapp exige sesión (POST /api/sessions + cabecera X-Session-Id) con los
+          # usuarios 1, 2 y 3 que trae su data.sql. JMeter apuntará al Service "bankapp".
+          command: ["sh", "-c", "mkdir -p /resultados/planes && python main.py \"$@\"", "--"]
+          args: ["--jar", "/trabajo/bankapp.jar",
+                 "--session", "--session-users", "1,2,3",
+                 "--host", "bankapp", "--port", "8080",
+                 "--output", "/resultados/planes/storm.jmx"]
+          volumeMounts:
+            - name: trabajo
+              mountPath: /trabajo
+            - name: resultados
+              mountPath: /resultados
+      volumes:
+        - name: trabajo
+          emptyDir: {}
+        - name: resultados
+          persistentVolumeClaim:
+            claimName: jmeter-resultados

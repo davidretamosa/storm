@@ -11,6 +11,26 @@ JTL="$RESULTADOS/resultados.jtl"
 VEREDICTO="$RESULTADOS/veredicto.txt"
 mkdir -p "$RESULTADOS"
 
+# Si el plan no envía métricas a InfluxDB (los generados por 2-processing no lo hacen),
+# se ejecuta una copia con el Backend Listener insertado justo después del TestPlan.
+PLAN=/test/plan.jmx
+if ! grep -q "<BackendListener" "$PLAN"; then
+  echo "El plan no envía métricas a Grafana: se añade el Backend Listener (backend-listener.xml)."
+  awk -v bloque=/scripts/backend-listener.xml '
+    { print }
+    tras_testplan && /<hashTree>/ {
+      while ((getline linea < bloque) > 0) if (dentro || linea ~ /<BackendListener/) { dentro = 1; print linea }
+      tras_testplan = 0
+    }
+    /<\/TestPlan>/ { tras_testplan = 1 }' "$PLAN" > /tmp/plan.jmx
+  # Mismos argumentos, pero con la copia en lugar del plan original
+  for arg in "$@"; do
+    shift
+    [ "$arg" = "$PLAN" ] && arg=/tmp/plan.jmx
+    set -- "$@" "$arg"
+  done
+fi
+
 jmeter "$@" || { echo "JMeter ha terminado con error: no se puede evaluar la prueba."; exit 2; }
 [ -s "$JTL" ] || { echo "La prueba no ha generado resultados."; exit 2; }
 

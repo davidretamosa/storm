@@ -23,6 +23,8 @@ Desde esta carpeta (`src/3-execution/k8s`):
 ./desplegar.sh                 # construye las imágenes y levanta app, InfluxDB, Prometheus y Grafana
 ./lanzar-prueba.sh normal      # lanza una prueba con el escenario indicado (por defecto, humo)
 ./lanzar-prueba.sh normal bankapp   # la misma prueba contra la bankapp (ver ../bankapp)
+./generar-plan.sh              # genera el plan con 2-processing a partir de la bankapp
+./lanzar-prueba.sh normal storm     # ejecuta el plan generado por 2-processing
 ./quitar.sh                    # borra todo el laboratorio del clúster
 ```
 
@@ -101,6 +103,8 @@ del escenario queda guardado en InfluxDB (etiqueta `application`).
 | `prometheus.yaml` | Prometheus y sus permisos para leer el cAdvisor del kubelet |
 | `grafana.yaml` | Grafana con datasources y dashboard ya configurados |
 | `jmeter-job.yaml` | Una prueba = un Job que ejecuta `plan.jmx` y termina |
+| `generador-job.yaml` | Job que ejecuta el generador de 2-processing sobre el `.jar` de la bankapp |
+| `backend-listener.xml` | Envío de métricas a InfluxDB que se añade a los planes que no lo traen |
 | `ejecutar-y-evaluar.sh` | Dentro del Job: lanza JMeter y comprueba los criterios de aprobado |
 | `criterios/` | Criterios de aprobado de cada objetivo (app y bankapp) |
 | `escenarios/` | Carga de cada escenario (humo, normal, pico, estres) |
