@@ -19,14 +19,4 @@ public class TransactionDTO {
     private String concept;
     private LocalDateTime timestamp;
     private Long accountId;
-
-}
-public TransactionDTO getTransactionById(Long id) {
-
-    Transaction transaction = transactionRepository.findById(id)
-            .orElseThrow(() ->
-                    new ResourceNotFoundException(
-                            "Transaction not found with id: " + id));
-
-    return toTransactionDTO(transaction);
 }
