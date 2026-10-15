@@ -1,10 +1,9 @@
 #!/bin/sh
 # Lanza una prueba de carga (Job de JMeter) y muestra su salida en directo.
-# Uso, desde src/3-execution/k8s:  ./lanzar-prueba.sh [escenario] [app|bankapp|storm]
+# Uso, desde src/3-execution/k8s:  ./lanzar-prueba.sh [escenario] [app|storm]
 #   escenario: humo (por defecto), normal, pico o estres (escenarios/*.properties)
 #   objetivo:  app     app de prueba con su plan (por defecto)
-#              bankapp bankapp con el plan provisional escrito a mano
-#              storm   bankapp con el plan que genera 2-processing (./generar-plan.sh)
+#              storm   bankapp con el plan entregado por 2-processing (./cargar-plan.sh)
 set -e
 cd "$(dirname "$0")"
 # En Git Bash (Windows) evita que rutas como pod:/resultados se conviertan a rutas de Windows
@@ -22,13 +21,12 @@ fi
 # Plan (ConfigMap), app a la que apunta JMeter y criterios de aprobado de cada objetivo
 case "$OBJETIVO" in
   app)     PLAN=jmeter-plan;         HOST=app;     CRITERIOS=app ;;
-  bankapp) PLAN=jmeter-plan-bankapp; HOST=bankapp; CRITERIOS=bankapp ;;
   storm)   PLAN=jmeter-plan-storm;   HOST=bankapp; CRITERIOS=bankapp
            if ! kubectl -n "$NS" get configmap jmeter-plan-storm >/dev/null 2>&1; then
-             echo "Aún no hay plan generado: ejecuta ./generar-plan.sh"
+             echo "Aún no hay plan cargado: ejecuta ./cargar-plan.sh <fichero.jmx>"
              exit 1
            fi ;;
-  *)       echo "Objetivo desconocido '$OBJETIVO': usa app, bankapp o storm"; exit 1 ;;
+  *)       echo "Objetivo desconocido '$OBJETIVO': usa app o storm"; exit 1 ;;
 esac
 if [ "$HOST" = bankapp ] && ! kubectl -n "$NS" get deploy bankapp >/dev/null 2>&1; then
   echo "La bankapp no está desplegada: ../bankapp/construir-imagen.sh y ./desplegar.sh"

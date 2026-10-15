@@ -25,10 +25,7 @@ venv/
 # La app de prueba y el plan de JMeter SÍ se versionan
 !src/3-execution/lab-jmeter/app/app.jar
 !src/3-execution/lab-jmeter/jmeter/plan.jmx
-!src/3-execution/bankapp/plan-bankapp.jmx
 # Resultados generados en cada prueba
 src/3-execution/lab-jmeter/resultados/
 # Resultados de las pruebas en Kubernetes (los copia lanzar-prueba.sh)
 src/3-execution/k8s/resultados/
-# Logs de la bankapp recogidos por simular-clientes.sh
-src/3-execution/k8s/logs/

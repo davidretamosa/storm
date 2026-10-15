@@ -3,11 +3,10 @@
 # Uso, desde src/3-execution/bankapp:  ./construir-imagen.sh [rama]
 #
 # El código se toma de una rama de Git sin cambiar de rama ni copiar nada:
-# por defecto origin/feature/java-app, donde está la bankapp completa mientras no
-# se fusione en develop. Cuando esté en develop: ./construir-imagen.sh origin/develop
+# por defecto origin/develop. Para probar otra versión: ./construir-imagen.sh origin/feature/java-app
 set -e
 cd "$(dirname "$0")"
-RAMA="${1:-origin/feature/java-app}"
+RAMA="${1:-origin/develop}"
 CODIGO=src/1-input/java-app-mock
 
 git fetch -q origin

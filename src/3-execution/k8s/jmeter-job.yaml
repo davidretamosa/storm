@@ -1,7 +1,7 @@
 # Una prueba de carga = un Job: arranca, ejecuta plan.jmx y termina.
 # El plan y los escenarios llegan desde ConfigMaps (los crea desplegar.sh):
-# jmeter-plan (app de prueba) o jmeter-plan-bankapp, y jmeter-escenarios.
-# Para lanzarla: ./lanzar-prueba.sh <escenario> [app|bankapp]
+# jmeter-plan (app de prueba) o jmeter-plan-storm (plan de 2-processing), y jmeter-escenarios.
+# Para lanzarla: ./lanzar-prueba.sh <escenario> [app|storm]
 # (el script sustituye los marcadores __ESCENARIO__, __PLAN__, __HOST__ y los criterios).
 # Al terminar, ejecutar-y-evaluar.sh comprueba los criterios de aprobado (criterios/):
 # si no se cumplen, el Job termina en estado Failed. Los resultados quedan en el disco

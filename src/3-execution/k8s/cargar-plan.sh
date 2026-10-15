@@ -1,6 +1,6 @@
 #!/bin/sh
-# Carga en el laboratorio un plan .jmx entregado por 2-processing (o cualquier otro) para
-# inyectarlo contra la bankapp, sin tener que generarlo aquí con ./generar-plan.sh.
+# Carga en el laboratorio el plan .jmx entregado por 2-processing (el grupo de IA) para
+# inyectarlo contra la bankapp.
 # Uso, desde src/3-execution/k8s:  ./cargar-plan.sh <fichero.jmx>
 # Después: ./lanzar-prueba.sh <escenario> storm
 #
