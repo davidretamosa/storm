@@ -1,5 +1,7 @@
 """Lectura de los logs de acceso de la aplicación objetivo (app del banco, 1-input/java-app-mock).
 
+Lee dos formatos, línea a línea: el JSON acordado con input (abajo) y OpenTelemetry (log_parser/otel.py).
+
 Formato: JSON Lines, una petición por línea:
 {"timestamp":"2026-10-01T11:42:35.123Z","requestId":"a1b2...","sessionId":"sess-9f8e7d6c","userId":12,
  "method":"POST","endpoint":"/api/accounts/{id}/deposit","path":"/api/accounts/3/deposit","status":200,
@@ -8,6 +10,8 @@ Formato: JSON Lines, una petición por línea:
 import json
 
 import pandas as pd
+
+from log_parser.otel import parse_otel_record
 
 # Nombre del campo en el log -> nombre de la columna en nuestra tabla.
 # Los campos del log que no estén aquí se ignoran.
@@ -44,6 +48,10 @@ def parse_line(line):
     # 2. Tiene que ser un objeto {...}
     if not isinstance(entry, dict):
         return None
+
+    # 2b. Si es un registro OpenTelemetry (lleva "attributes"), se lee con su propio formato (otel.py)
+    if "attributes" in entry:
+        return parse_otel_record(entry)
 
     # 3. Tiene que tener los campos obligatorios
     for field in REQUIRED:
