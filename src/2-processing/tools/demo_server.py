@@ -1,0 +1,147 @@
+"""SOLO PARA LA DEMO: servidor de prueba que hace de "app del banco" para recibir el tráfico de JMeter.
+
+No es la app real: responde a todo con un JSON (GET -> 200 con {}; POST -> 201 con {"id": 100, 101...},
+como si hubiera creado algo, para poder probar la correlación). Sirve para:
+  1. Ver en directo cada petición que envía JMeter (con su pausa, sus ids y su body).
+  2. Al parar (Ctrl+C), comparar el % de cada petición recibida con el % que había en el log:
+     si el modelo funciona, deben parecerse (sin log, solo se enseña el % recibido).
+
+Uso (desde src/2-processing):
+    .venv/Scripts/python.exe tools/demo_server.py --logs samples/access_sample.log --jar samples/demo-bankapp.jar
+    añadir --stop-after 70 para que se pare solo a los 70 s (si no, Ctrl+C)
+Y en otra terminal, JMeter contra http://localhost:8080 (ver DEMO.md).
+"""
+import argparse
+import json
+import re
+import sys
+import threading
+import time
+from collections import Counter
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+# Para importar log_parser al ejecutarlo como script
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from jar_parser.parser import parse_jar  # noqa: E402
+from log_parser.parser import parse_logs  # noqa: E402
+
+received = Counter()
+next_id = [100]  # ids que "crea" el servidor (como la app real, empieza en 100)
+lock = threading.Lock()
+start_time = time.time()
+
+
+def to_endpoint(path, endpoints):
+    """'/api/accounts/3/deposit' -> '/api/accounts/{id}/deposit' (usando los endpoints del log)."""
+    path = path.split("?")[0]
+    for endpoint in endpoints:
+        pattern = "^" + re.sub(r"\\\{\w+\\\}", "[^/]+", re.escape(endpoint)) + "$"
+        if re.match(pattern, path):
+            return endpoint
+    return path
+
+
+class Handler(BaseHTTPRequestHandler):
+    endpoints = []
+    require_session = False  # --require-session: como la app del banco, sin X-Session-Id -> 400
+
+    def reply(self, status, response):
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(response)))
+        self.end_headers()
+        self.wfile.write(response)
+
+    def handle_request(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(length).decode("utf-8") if length else ""
+        try:  # para que se vean los acentos: {"name":"Laura Martí"} -> {"name":"Laura Martí"}
+            body = json.dumps(json.loads(body), ensure_ascii=False)
+        except ValueError:
+            pass
+        # Inicio de sesión (POST /api/sessions): devuelve un identificador de sesión
+        if self.path.startswith("/api/sessions"):
+            with lock:
+                session_id = f"sess-{next_id[0]}"
+                next_id[0] += 1
+                print(f"          inicio de sesión  {body}  ->  {session_id}", flush=True)
+            self.reply(201, json.dumps({"sessionId": session_id}).encode())
+            return
+        # El "portero": sin sesión no se entra (como la app real)
+        if self.require_session and not self.headers.get("X-Session-Id"):
+            with lock:
+                received["SIN SESIÓN (400)"] += 1
+            self.reply(400, b'{"error": "Missing X-Session-Id"}')
+            return
+
+        key = self.command + " " + to_endpoint(self.path, self.endpoints)
+        with lock:  # varios usuarios a la vez: una línea cada vez para que no se mezclen
+            received[key] += 1
+            total = sum(received.values())
+            seconds = time.time() - start_time
+            print(f"[{seconds:6.1f}s] #{total:<4} {self.command:6} {self.path:32} {body}", flush=True)
+
+        if self.command == "POST":
+            with lock:
+                response = json.dumps({"id": next_id[0]}).encode()
+                next_id[0] += 1
+            self.reply(201, response)
+        else:
+            self.reply(200, b"{}")
+
+    do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = handle_request
+
+    def log_message(self, *args):
+        pass  # sin el log por defecto de http.server
+
+
+def print_summary(df):
+    """Tabla: % de cada petición en el log (si hay) vs % recibido de JMeter."""
+    in_log = {}
+    if df is not None:
+        in_log = (df["method"] + " " + df["endpoint"]).value_counts(normalize=True).to_dict()
+    total = sum(received.values())
+    print("\n" + "=" * 78)
+    print(f"RESUMEN: {total} peticiones recibidas de JMeter")
+    print("=" * 78)
+    print(f"{'Petición':48} {'% en el log':>12} {'% recibido':>12}")  # sin log: 0.0% en el log
+    for key in sorted(set(in_log) | set(received)):
+        log_pct = in_log.get(key, 0) * 100
+        received_pct = received[key] / total * 100 if total else 0
+        print(f"{key:48} {log_pct:11.1f}% {received_pct:11.1f}%")
+
+
+def main():
+    args = argparse.ArgumentParser(description="Servidor de prueba para la demo (hace de app del banco).")
+    args.add_argument("--logs", help="log con el que se generó el .jmx (para comparar los %%)")
+    args.add_argument("--jar", help=".jar con el que se generó el .jmx (para reconocer sus endpoints)")
+    args.add_argument("--port", type=int, default=8080)
+    args.add_argument("--stop-after", type=int, help="parar solo tras estos segundos (si no, Ctrl+C)")
+    args.add_argument("--require-session", action="store_true",
+                      help="como la app del banco: rechaza (400) las peticiones sin cabecera X-Session-Id")
+    opts = args.parse_args()
+
+    df = parse_logs(opts.logs) if opts.logs else None
+    known = set(df["endpoint"]) if df is not None else set()
+    if opts.jar:
+        known |= {e["endpoint"] for e in parse_jar(opts.jar)}
+    # Los más largos primero, para que /api/accounts/{id}/deposit no se confunda con /api/accounts/{id}
+    Handler.endpoints = sorted(known, key=len, reverse=True)
+    Handler.require_session = opts.require_session
+
+    server = ThreadingHTTPServer(("127.0.0.1", opts.port), Handler)
+    print(f"Servidor de prueba escuchando en http://localhost:{opts.port}  (Ctrl+C para parar y ver el resumen)")
+    if opts.stop_after:
+        threading.Timer(opts.stop_after, server.shutdown).start()
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+        print_summary(df)
+
+
+if __name__ == "__main__":
+    main()
