@@ -1,6 +1,11 @@
 #!/bin/sh
 # Genera el plan de prueba con el generador de 2-processing a partir de la bankapp desplegada.
-# Uso, desde src/3-execution/k8s:  ./generar-plan.sh
+# Uso, desde src/3-execution/k8s:  ./generar-plan.sh [logs]
+#   logs: fichero .jsonl con el uso de la bankapp del que aprende el generador. Puede ser
+#         - una ruta local (p. ej. logs/bankapp-20261015-122818.jsonl)
+#         - "repo": el fichero de logs que mantiene 1-input en Git
+#           (origin/develop:src/1-input/java-app-mock/logs/bankapp.jsonl)
+#   Sin argumento usa los últimos recogidos por ./simular-clientes.sh (o solo el .jar si no hay).
 # Antes: ../bankapp/construir-imagen.sh, ../generador/construir-imagen.sh y ./desplegar.sh
 # Después: ./lanzar-prueba.sh <escenario> storm
 set -e
@@ -14,6 +19,22 @@ for imagen in bankapp storm-generador; do
     exit 1
   fi
 done
+
+# Logs indicados: se dejan en el disco del clúster, donde los busca el generador
+LOGS="${1:-}"
+if [ "$LOGS" = repo ]; then
+  git fetch -q origin
+  LOGS=logs/bankapp-repo.jsonl
+  mkdir -p logs
+  git show origin/develop:src/1-input/java-app-mock/logs/bankapp.jsonl > "$LOGS"
+fi
+if [ -n "$LOGS" ]; then
+  [ -s "$LOGS" ] || { echo "No existe el fichero de logs '$LOGS'"; exit 1; }
+  RESULTADOS=$(kubectl -n "$NS" get pod -l app=resultados -o jsonpath='{.items[0].metadata.name}')
+  kubectl -n "$NS" exec "$RESULTADOS" -- mkdir -p /resultados/logs
+  kubectl -n "$NS" cp "$LOGS" "$RESULTADOS:/resultados/logs/bankapp.jsonl" >/dev/null
+  echo "Logs para el generador: $LOGS ($(wc -l < "$LOGS") peticiones)"
+fi
 
 kubectl -n "$NS" delete job generador --ignore-not-found >/dev/null
 kubectl apply -f generador-job.yaml >/dev/null

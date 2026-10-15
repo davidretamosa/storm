@@ -32,8 +32,8 @@ cd src/3-execution
 bankapp/construir-imagen.sh          # 1-input: compila la bankapp (con su sistema de logs)
 generador/construir-imagen.sh        # 2-processing: empaqueta el generador desde su rama
 k8s/desplegar.sh                     # levanta el laboratorio con la bankapp
-k8s/simular-clientes.sh 5 8          # 8 clientes usan la bankapp 5 min y se recogen sus logs
-k8s/generar-plan.sh                  # el generador aprende de los logs (y del .jar) y crea el plan
+k8s/generar-plan.sh repo             # el modelo aprende de los logs de 1-input (Git) y del .jar
+                                     # (alternativa: k8s/simular-clientes.sh y k8s/generar-plan.sh)
 k8s/lanzar-prueba.sh normal storm    # 3-execution: ejecuta ese plan contra la bankapp
 ```
 
@@ -78,13 +78,19 @@ objetivo `storm`. Si antes se ha ejecutado `k8s/simular-clientes.sh`, aprende de
 bankapp (qué operaciones se hacen, en qué orden, con qué datos); si no, solo del `.jar`, y
 rellena los cuerpos con valores de ejemplo que la app rechaza en parte.
 
+Los logs de 1-input en Git (`src/1-input/java-app-mock/logs/bankapp.jsonl`, 548 peticiones y 107
+sesiones con fechas reales) son la entrada recomendada: `k8s/generar-plan.sh repo`. Con ellos el
+plan reproduce las pausas reales entre clics (mediana ~40 s).
+
 Pendiente en otras partes (detectado al enlazarlas, 15 oct 2026):
-- **1-input**: los logs tienen todas las fechas a `1970-01-01`, así que el generador no puede
-  calcular las pausas entre clics (salen 0 y los usuarios virtuales no paran).
-- **1-input**: los logs no guardan los campos de las altas (`name`, `email`, `userId`...), solo los
-  de dinero; el generador envía esas altas vacías y la app las rechaza.
-- **2-processing**: en las transferencias elige origen y destino por separado y a veces coinciden
-  (la app lo rechaza).
+- **2-processing**: los importes se generan al azar entre el mínimo y el máximo vistos en los logs,
+  incluidas las peticiones que fallaron (retirada de 99.999 €, ingreso de -10 €). Resultado: la
+  mayoría de retiradas y transferencias piden más saldo del que hay (prueba `normal`: 100 % y 82 %
+  de errores). Convendría aprender solo de las peticiones con éxito o usar los valores observados.
+- **2-processing**: en las transferencias elige origen y destino por separado y a veces coinciden.
+- **1-input**: la bankapp en ejecución sigue escribiendo las fechas de sus logs como `1970-01-01`
+  (afecta a `k8s/simular-clientes.sh`; el fichero de logs de Git sí tiene fechas reales).
+- **1-input**: los logs no guardan los campos de las altas (`name`, `email`, `userId`...).
 
 ## Estado
 

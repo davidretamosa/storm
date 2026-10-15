@@ -25,6 +25,7 @@ Desde esta carpeta (`src/3-execution/k8s`):
 ./lanzar-prueba.sh normal bankapp   # la misma prueba contra la bankapp (ver ../bankapp)
 ./simular-clientes.sh 5 8      # 8 clientes simulados usan la bankapp 5 min; recoge sus logs
 ./generar-plan.sh              # genera el plan con 2-processing (logs recogidos + .jar)
+./generar-plan.sh repo         # igual, pero aprendiendo de los logs de 1-input guardados en Git
 ./lanzar-prueba.sh normal storm     # ejecuta el plan generado por 2-processing
 ./quitar.sh                    # borra todo el laboratorio del clúster
 ```
