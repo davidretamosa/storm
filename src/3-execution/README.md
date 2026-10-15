@@ -22,16 +22,18 @@ dentro del clúster junto al laboratorio.
 | [`lab-jmeter/`](lab-jmeter/README.md) | Laboratorio con Docker Compose: la versión sencilla, con una app de prueba | Para entender el laboratorio o probar algo rápido. `k8s/` reutiliza sus piezas |
 | [`bankapp/`](bankapp/README.md) | Compila la bankapp de `1-input` y su plan de prueba provisional | Lo usa `k8s/` para probar la aplicación real |
 | `generador/` | Empaqueta el generador de planes de `2-processing` (`construir-imagen.sh`) | Lo usa `k8s/generar-plan.sh` |
+| `simulador/` | Simulador de clientes: usa la bankapp como personas (5 perfiles, pausas de 1 a 10 s) para que genere logs | Lo usa `k8s/simular-clientes.sh` |
 | `docker/` | Vacía (estructura inicial del repositorio) | — |
 
 ## Prueba de punta a punta (las tres partes)
 
 ```bash
 cd src/3-execution
-bankapp/construir-imagen.sh          # 1-input: compila la bankapp desde su rama
+bankapp/construir-imagen.sh          # 1-input: compila la bankapp (con su sistema de logs)
 generador/construir-imagen.sh        # 2-processing: empaqueta el generador desde su rama
 k8s/desplegar.sh                     # levanta el laboratorio con la bankapp
-k8s/generar-plan.sh                  # el generador lee el .jar de la bankapp y crea el plan
+k8s/simular-clientes.sh 5 8          # 8 clientes usan la bankapp 5 min y se recogen sus logs
+k8s/generar-plan.sh                  # el generador aprende de los logs (y del .jar) y crea el plan
 k8s/lanzar-prueba.sh normal storm    # 3-execution: ejecuta ese plan contra la bankapp
 ```
 
@@ -72,9 +74,17 @@ El plan provisional escrito a mano (`bankapp/plan-bankapp.jmx`, objetivo `bankap
 al inicio de sesión de la bankapp: con la versión con sesiones, sus peticiones reciben 400.
 
 El generador se ejecuta dentro del clúster (`k8s/generar-plan.sh`) y su plan se lanza con el
-objetivo `storm`. Sin logs reales de la bankapp, el generador rellena los cuerpos con valores
-de ejemplo (`"test"`, ids `1`), y la app rechaza algunas peticiones (email inválido,
-transferencia a la misma cuenta, retirada sin saldo). Con los logs reales esto desaparece.
+objetivo `storm`. Si antes se ha ejecutado `k8s/simular-clientes.sh`, aprende de los logs de la
+bankapp (qué operaciones se hacen, en qué orden, con qué datos); si no, solo del `.jar`, y
+rellena los cuerpos con valores de ejemplo que la app rechaza en parte.
+
+Pendiente en otras partes (detectado al enlazarlas, 15 oct 2026):
+- **1-input**: los logs tienen todas las fechas a `1970-01-01`, así que el generador no puede
+  calcular las pausas entre clics (salen 0 y los usuarios virtuales no paran).
+- **1-input**: los logs no guardan los campos de las altas (`name`, `email`, `userId`...), solo los
+  de dinero; el generador envía esas altas vacías y la app las rechaza.
+- **2-processing**: en las transferencias elige origen y destino por separado y a veces coinciden
+  (la app lo rechaza).
 
 ## Estado
 
@@ -84,5 +94,5 @@ transferencia a la misma cuenta, retirada sin saldo). Con los logs reales esto d
 - [x] Bankapp real desplegada y probada
 - [x] Criterios de aprobado y resultados guardados por prueba
 - [x] Ejecutar el plan generado por 2-processing (prueba de punta a punta)
-- [ ] Generar el plan con los logs reales de la bankapp (cuando los produzca)
+- [x] Simulador de clientes y generación del plan a partir de los logs de la bankapp
 - [ ] JMeter distribuido (varios pods) para cargas muy grandes

@@ -30,3 +30,5 @@ venv/
 src/3-execution/lab-jmeter/resultados/
 # Resultados de las pruebas en Kubernetes (los copia lanzar-prueba.sh)
 src/3-execution/k8s/resultados/
+# Logs de la bankapp recogidos por simular-clientes.sh
+src/3-execution/k8s/logs/

@@ -1,8 +1,9 @@
 # Genera el plan de prueba con el generador de 2-processing (imagen storm-generador),
-# leyendo el .jar de la bankapp que está desplegada. Lo lanza ./generar-plan.sh.
+# leyendo el .jar de la bankapp que está desplegada y, si existen, los logs recogidos por
+# ./simular-clientes.sh (/resultados/logs/bankapp.jsonl). Lo lanza ./generar-plan.sh.
 #
 #   initContainer: copia el .jar de la imagen bankapp a una carpeta compartida
-#   generador:     main.py --jar ... --session -> /resultados/planes/storm.jmx
+#   generador:     main.py [--logs ...] --jar ... --session -> /resultados/planes/storm.jmx
 #
 # El plan queda en el disco jmeter-resultados; generar-plan.sh lo convierte en el
 # ConfigMap jmeter-plan-storm, que es el que usa ./lanzar-prueba.sh <escenario> storm.
@@ -34,7 +35,8 @@ spec:
           imagePullPolicy: Never
           # La bankapp exige sesión (POST /api/sessions + cabecera X-Session-Id) con los
           # usuarios 1, 2 y 3 que trae su data.sql. JMeter apuntará al Service "bankapp".
-          command: ["sh", "-c", "mkdir -p /resultados/planes && python main.py \"$@\"", "--"]
+          # Si hay logs recogidos, se añade --logs: el generador aprende de ellos cómo se usa la app
+          command: ["sh", "-c", "mkdir -p /resultados/planes; L=/resultados/logs/bankapp.jsonl; if [ -s $L ]; then set -- --logs $L \"$@\"; fi; python main.py \"$@\"", "--"]
           args: ["--jar", "/trabajo/bankapp.jar",
                  "--session", "--session-users", "1,2,3",
                  "--host", "bankapp", "--port", "8080",
