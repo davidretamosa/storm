@@ -10,7 +10,7 @@ bankapp + logs ──▶ genera el plan .jmx ──▶ JMeter lo ejecuta contra 
                                             └─▶ InfluxDB / Prometheus ──▶ Grafana + veredicto
 ```
 
-Las tres partes ya funcionan enlazadas en el Kubernetes del equipo local: la bankapp
+Las tres partes ya funcionan enlazadas en el Kubernetes local (Docker Desktop): la bankapp
 (1-input) y el generador (2-processing) se compilan desde sus ramas de Git y se ejecutan
 dentro del clúster junto al laboratorio.
 
@@ -66,8 +66,10 @@ están en http://localhost:30000/d/lab-jmeter-k8s (admin / admin).
 ## Conexión con 2-processing
 
 El plan que genera `2-processing` se ejecuta tal cual: este laboratorio usa sus mismas
-propiedades (`vusers`, `rampup`, `duration`, `host`, `port`). Mientras no esté integrado, la
-bankapp se prueba con un plan provisional escrito a mano (`bankapp/plan-bankapp.jmx`).
+propiedades (`vusers`, `rampup`, `duration`, `host`, `port`).
+
+El plan provisional escrito a mano (`bankapp/plan-bankapp.jmx`, objetivo `bankapp`) es anterior
+al inicio de sesión de la bankapp: con la versión con sesiones, sus peticiones reciben 400.
 
 El generador se ejecuta dentro del clúster (`k8s/generar-plan.sh`) y su plan se lanza con el
 objetivo `storm`. Sin logs reales de la bankapp, el generador rellena los cuerpos con valores
