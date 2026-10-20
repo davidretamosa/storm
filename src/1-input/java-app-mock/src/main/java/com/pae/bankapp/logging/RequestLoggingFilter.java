@@ -24,6 +24,7 @@ import org.springframework.web.util.ContentCachingResponseWrapper;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.UUID;
 
 @Component
@@ -96,6 +97,7 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
 
             try {
                 var log = otelLogger.logRecordBuilder()
+                        .setTimestamp(Instant.now())
                         .setSeverity(
                                 status >= 500 ? Severity.ERROR : Severity.INFO
                         )
