@@ -6,6 +6,7 @@ eco) i, per als fils actius, el .jtl de JMeter. Distàncies: 0 = idèntic.
 - endpoints:  Jensen-Shannon (base 2, entre 0 i 1) entre el repartiment de peticions per endpoint;
 - franja:     Jensen-Shannon entre la forma de la corba temporal: el log es parteix en franges d'una hora
               i el trànsit generat en el mateix nombre de franges iguals (la prova dura minuts, no hores);
+              si el log no arriba a dues franges, NaN (no hi ha corba per comparar);
 - pauses:     segons entre peticions consecutives d'una sessió, amb Wasserstein (s) i KS;
 - sessions:   peticions per sessió i durada (s), amb Wasserstein i KS;
 - seqüències: Jensen-Shannon entre els parells (petició, següent) incloent-hi l'inici i el final de sessió;
@@ -57,6 +58,8 @@ def time_bins(df, bins):
 def hourly_distance(original, generated):
     hours = original["timestamp"].dt.floor("h")
     bins = max(1, int((hours.max() - hours.min()) / pd.Timedelta(hours=1)) + 1)
+    if bins < 2:   # un log de menys d'una hora no té corba horària: un 0 aquí no voldria dir res
+        return float("nan"), bins
     return js_distance(time_bins(original, bins), time_bins(generated, bins)), bins
 
 

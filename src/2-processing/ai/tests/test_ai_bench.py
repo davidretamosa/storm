@@ -68,6 +68,18 @@ def test_ignore_removes_the_login():
 
 
 @needs_scipy
+def test_hourly_needs_at_least_two_hours():
+    short = metrics.requests(log_df([("2026-10-01T09:00:00Z", "a", "GET", "/x"), ("2026-10-01T09:40:00Z", "a", "GET", "/x")]))
+    value, bins = metrics.hourly_distance(short, short)
+    assert bins == 1 and value != value   # NaN, no 0
+    day = metrics.requests(log_df([("2026-10-01T09:00:00Z", "a", "GET", "/x"), ("2026-10-01T11:10:00Z", "a", "GET", "/x")]))
+    flat = metrics.requests(log_df([("2026-10-01T09:00:00Z", "a", "GET", "/x"), ("2026-10-01T09:00:30Z", "a", "GET", "/x"),
+                                    ("2026-10-01T09:01:00Z", "a", "GET", "/x")]))
+    value, bins = metrics.hourly_distance(day, flat)
+    assert bins == 3 and 0 < value <= 1
+
+
+@needs_scipy
 def test_confidence_interval():
     ci = metrics.confidence_interval([1.0, 2.0, 3.0, 4.0, 5.0])
     assert ci["mean"] == 3 and ci["low"] < 3 < ci["high"] and ci["n"] == 5
