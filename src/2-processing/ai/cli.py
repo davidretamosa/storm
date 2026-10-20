@@ -3,19 +3,22 @@
 Llegeix només les opcions --ai-*; la resta va tal qual a main.main() dels companys.
 
 - Cap millora activa: es crida main.main() sense instal·lar res (identitat per construcció).
-- Alguna millora activa: s'instal·len les seves capes, es crida main.main(), es comprova que les
-  capes s'han cridat, i el .jmx passa pel post-procés (ai/jmx_post.py).
+- Alguna millora activa: es comprova ai/UPSTREAM.lock, s'instal·len les capes, es crida main.main(),
+  es comprova que les capes s'han cridat (si no, s'esborra el .jmx i falla) i el .jmx passa pel
+  post-procés (ai/jmx_post.py).
 - --ai-noop: totes les capes en mode identitat, sense post-procés (ha de donar el mateix .jmx).
 - --ai-canary: un canvi petit i conegut (ai/enhancements/canary.py).
 """
 import argparse
 import sys
+from pathlib import Path
 
 import main as upstream
 from ai import jmx_post
+from ai import upstream as lock
 from ai.enhancements import CANARY, ENHANCEMENTS
 from ai.enhancements.base import Context
-from ai.hooks import WRAPPABLE, Installation
+from ai.hooks import WRAPPABLE, HookError, Installation
 
 
 def build_parser():
@@ -72,8 +75,19 @@ def run(argv=None):
         call_upstream(rest)
         return None
 
+    # Amb capes actives, el codi dels companys ha de ser aquell sobre el qual s'han validat (ai/UPSTREAM.lock)
+    drift = lock.problems()
+    if drift:
+        raise HookError(f"{drift}: {lock.MESSAGE}")
+
     installation = Installation(layers)
     with installation:
         call_upstream(rest)
-    installation.check_called()
+    try:
+        installation.check_called()
+    except HookError:
+        # Un pla generat amb una capa saltada no es pot fer passar per bo: s'esborra
+        for bound in installation.called("generate_jmx"):
+            Path(bound.arguments["output_path"]).unlink(missing_ok=True)
+        raise
     return installation

@@ -5,6 +5,7 @@ import pytest
 
 import main
 from ai import jmx_post, upstream
+from ai import upstream as lock
 from ai.cli import build_parser, run
 from ai.hooks import WRAPPABLE, HookError, Installation
 from ai.tests.support import INPUTS, ROOT
@@ -73,6 +74,16 @@ def test_uncalled_active_wrapper_fails(monkeypatch, tmp_path):
     monkeypatch.setattr(main, "main", main_that_skips_correlation)
     with pytest.raises(HookError, match="build_correlation"):
         run(["--ai-noop", *INPUTS["logs"], "--output", str(tmp_path / "p.jmx")])
+    assert not (tmp_path / "p.jmx").exists()   # el pla amb la capa saltada no queda al disc
+
+
+def test_drifted_upstream_refuses_active_layers(monkeypatch, tmp_path):
+    monkeypatch.setattr(lock, "problems", lambda: ["ha canviat: traffic_model/markov.py"])
+    with pytest.raises(HookError, match="revalida els embolcalls i actualitza el lock"):
+        run(["--ai-noop", *INPUTS["logs"], "--output", str(tmp_path / "p.jmx")])
+    assert not (tmp_path / "p.jmx").exists()
+    run([*INPUTS["logs"], "--output", str(tmp_path / "p.jmx")])   # tot desactivat: la cadena dels companys, igual
+    assert (tmp_path / "p.jmx").exists()
 
 
 def test_conditional_functions_are_not_required(tmp_path):

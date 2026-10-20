@@ -1,4 +1,5 @@
 """El banc de proves: mètriques, servidor eco i instrumentació. scipy només fa falta aquí."""
+import importlib.util
 import json
 import subprocess
 import sys
@@ -16,8 +17,11 @@ from ai.bench.run import instrument
 from ai.tests.support import AI, INPUTS, LOG, ROOT, generate
 from log_parser.parser import parse_logs
 
-pytest.importorskip("scipy")
-from ai.bench import metrics  # noqa: E402
+from ai.bench import metrics
+
+# Només les mètriques necessiten scipy; el servidor eco, la instrumentació i JMeter no
+needs_scipy = pytest.mark.skipif(importlib.util.find_spec("scipy") is None,
+                                 reason="les mètriques necessiten scipy (ai/requirements.txt)")
 
 
 def log_df(rows):
@@ -28,6 +32,7 @@ def log_df(rows):
     return df.rename(columns={"sessionId": "session_id"})
 
 
+@needs_scipy
 def test_identical_traffic_has_zero_distance():
     df = parse_logs(str(ROOT / LOG))
     result = metrics.fidelity(df, df)
@@ -37,12 +42,14 @@ def test_identical_traffic_has_zero_distance():
     assert result["session_length"]["ks"] == pytest.approx(0)
 
 
+@needs_scipy
 def test_disjoint_endpoints_have_distance_one():
     a = log_df([("2026-10-01T09:00:00Z", "s", "GET", "/a"), ("2026-10-01T09:00:01Z", "s", "GET", "/a")])
     b = log_df([("2026-10-01T09:00:00Z", "s", "GET", "/b"), ("2026-10-01T09:00:01Z", "s", "GET", "/b")])
     assert metrics.endpoint_distance(metrics.requests(a), metrics.requests(b)) == pytest.approx(1)
 
 
+@needs_scipy
 def test_pauses_and_sessions():
     df = metrics.requests(log_df([
         ("2026-10-01T09:00:00Z", "a", "GET", "/x"), ("2026-10-01T09:00:10Z", "a", "GET", "/y"),
@@ -60,6 +67,7 @@ def test_ignore_removes_the_login():
     assert list(metrics.requests(df, ["POST /api/sessions"])["key"]) == ["GET /x"]
 
 
+@needs_scipy
 def test_confidence_interval():
     ci = metrics.confidence_interval([1.0, 2.0, 3.0, 4.0, 5.0])
     assert ci["mean"] == 3 and ci["low"] < 3 < ci["high"] and ci["n"] == 5
