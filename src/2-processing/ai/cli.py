@@ -86,8 +86,18 @@ def run(argv=None):
     try:
         installation.check_called()
     except HookError:
-        # Un pla generat amb una capa saltada no es pot fer passar per bo: s'esborra
-        for bound in installation.called("generate_jmx"):
-            Path(bound.arguments["output_path"]).unlink(missing_ok=True)
+        # Un pla generat amb una capa saltada no es pot fer passar per bo: s'esborra. El camí es treu
+        # dels arguments de main.py, no de la crida a generate_jmx (que pot ser justament la saltada)
+        outputs = {output_path(rest)} | {bound.arguments["output_path"] for bound in installation.called("generate_jmx")}
+        for output in outputs:
+            Path(output).unlink(missing_ok=True)
         raise
     return installation
+
+
+def output_path(argv):
+    """El --output que llegiria main.py (amb les seves abreviatures, p. ex. --out, i el seu valor per defecte)."""
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--output", default="output/generated_scenario.jmx")
+    opts, _ = parser.parse_known_args(argv)
+    return opts.output

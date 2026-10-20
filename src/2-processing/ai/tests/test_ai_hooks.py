@@ -77,6 +77,22 @@ def test_uncalled_active_wrapper_fails(monkeypatch, tmp_path):
     assert not (tmp_path / "p.jmx").exists()   # el pla amb la capa saltada no queda al disc
 
 
+def test_skipped_generate_jmx_leaves_no_plan(monkeypatch, tmp_path):
+    """Cas trobat pel verificador: si la capa saltada és la de generate_jmx, el pla tampoc no ha de quedar."""
+    from jmx_generator.generator import generate_jmx   # l'original, sense cap embolcall
+    real_main = main.main
+
+    def main_that_skips_generate():
+        main.generate_jmx = generate_jmx
+        real_main()
+
+    monkeypatch.setattr(main, "main", main_that_skips_generate)
+    for flags in (["--ai-noop"], ["--ai-canary"]):
+        with pytest.raises(HookError, match="generate_jmx"):
+            run([*flags, *INPUTS["logs"], "--out", str(tmp_path / "p.jmx")])   # --out: abreviatura de main.py
+        assert not (tmp_path / "p.jmx").exists()
+
+
 def test_drifted_upstream_refuses_active_layers(monkeypatch, tmp_path):
     monkeypatch.setattr(lock, "problems", lambda: ["ha canviat: traffic_model/markov.py"])
     with pytest.raises(HookError, match="revalida els embolcalls i actualitza el lock"):
