@@ -1,0 +1,6 @@
+# Dependències de la capa d'IA: les dels companys + ML clàssic (D-4: motor local).
+# Només es carreguen dins dels mòduls que les fan servir: l'arquitectura (python -m ai) i la prova
+# d'identitat funcionen sense.
+-r ../requirements.txt
+scikit-learn>=1.4
+scipy>=1.12
