@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[2]   # src/2-processing
 
 LOG = "samples/access_sample.log"
 JAR = "samples/demo-bankapp.jar"
-MARTINA = "samples/martina_bankapp.jsonl"
+BANKAPP = "../1-input/java-app-mock/logs/bankapp.jsonl"   # el log de la bankapp (abans, la còpia samples/martina_bankapp.jsonl)
 
 # Les 5 entrades de la prova d'identitat (encàrrec T-ARQ, punt 3)
 INPUTS = {
@@ -17,7 +17,7 @@ INPUTS = {
     "jar": ["--jar", JAR],
     "logs+jar": ["--logs", LOG, "--jar", JAR],
     "logs+jar+session": ["--logs", LOG, "--jar", JAR, "--session", "--session-users", "1,2,3"],
-    "martina+session": ["--logs", MARTINA, "--session"],
+    "bankapp+session": ["--logs", BANKAPP, "--session"],
 }
 
 
