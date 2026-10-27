@@ -3,7 +3,6 @@
 *.jar
 *.war
 target/
-.mvn/
 
 # Python y entornos virtuales
 __pycache__/
