@@ -32,6 +32,10 @@ spec:
               value: "__MAX_P95_MS__"
             - name: RESULTADOS
               value: "/resultados/__ID__"
+            # Memoria de JMeter (por defecto 1 GiB, igual que el límite del pod: con ~100 usuarios
+            # sin pausas del plan de 2-processing se quedaba sin memoria). Deja 1 GiB fuera del heap.
+            - name: HEAP
+              value: "-Xms1g -Xmx2g -XX:MaxMetaspaceSize=256m"
           # Argumentos de jmeter. -e -o genera el informe HTML al terminar (su carpeta temporal
           # va a /tmp porque /test, donde está el plan, es de solo lectura).
           # El .jtl se separa por tabuladores (no por comas): los mensajes de error pueden
@@ -53,9 +57,9 @@ spec:
           resources:
             requests:
               cpu: 500m
-              memory: 512Mi
-            limits:
               memory: 1Gi
+            limits:
+              memory: 3Gi
       volumes:
         - name: plan
           configMap:

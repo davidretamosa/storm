@@ -38,6 +38,11 @@ siempre el mismo.
 | `normal` | 20  | 30 s  | 3 min | ¿Aguanta el día a día con holgura? |
 | `pico`   | 80  | 10 s  | 2 min | ¿Qué notan los usuarios con 4 veces más tráfico de golpe? |
 | `estres` | 150 | 4 min | 5 min | ¿En qué punto se dispara el tiempo de respuesta o aparecen errores? |
+| `rotura` | 400, sin pausas | 10 min | 10 min | ¿Dónde está el límite de la app y qué se rompe primero? |
+
+Los planes de `2-processing` repiten las pausas reales de los usuarios entre peticiones, así
+que muchos usuarios generan poco tráfico. `factor_pausa` las escala: 1 = pausas reales (por
+defecto), 0 = sin pausas. `rotura` usa 0 para llegar al límite de la app con un solo JMeter.
 
 Las propiedades (`vusers`, `rampup`, `duration`, `host`, `port`) son las mismas que usa el
 plan que genera `2-processing`, así que estos escenarios también valdrán para él. Para
@@ -105,7 +110,7 @@ del escenario queda guardado en InfluxDB (etiqueta `application`).
 | `backend-listener.xml` | Envío de métricas a InfluxDB que se añade a los planes que no lo traen |
 | `ejecutar-y-evaluar.sh` | Dentro del Job: lanza JMeter y comprueba los criterios de aprobado |
 | `criterios/` | Criterios de aprobado de cada objetivo (`app` y `bankapp`, que usa el objetivo `storm`) |
-| `escenarios/` | Carga de cada escenario (humo, normal, pico, estres) |
+| `escenarios/` | Carga de cada escenario (humo, normal, pico, estres, rotura) |
 | `grafana/lab-jmeter-k8s.json` | Dashboard: el de `lab-jmeter` con CPU y memoria por pod |
 
 No se duplica nada de `../lab-jmeter`: `desplegar.sh` construye las imágenes desde

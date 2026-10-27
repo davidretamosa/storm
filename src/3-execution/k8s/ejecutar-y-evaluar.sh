@@ -18,9 +18,13 @@ JTL="$RESULTADOS/resultados.jtl"
 VEREDICTO="$RESULTADOS/veredicto.txt"
 mkdir -p "$RESULTADOS"
 
-# Si el plan no envía métricas a InfluxDB (los generados por 2-processing no lo hacen),
-# se ejecuta una copia con el Backend Listener insertado justo después del TestPlan.
+# JMeter ejecuta una copia del plan (/test es de solo lectura) con los ajustes de abajo
 PLAN=/test/plan.jmx
+COPIA=/tmp/plan.jmx
+cp "$PLAN" "$COPIA"
+
+# Si el plan no envía métricas a InfluxDB (los generados por 2-processing no lo hacen),
+# se inserta el Backend Listener justo después del TestPlan.
 if ! grep -q "<BackendListener" "$PLAN"; then
   echo "El plan no envía métricas a Grafana: se añade el Backend Listener (backend-listener.xml)."
   awk -v bloque=/scripts/backend-listener.xml '
@@ -29,14 +33,22 @@ if ! grep -q "<BackendListener" "$PLAN"; then
       while ((getline linea < bloque) > 0) if (dentro || linea ~ /<BackendListener/) { dentro = 1; print linea }
       tras_testplan = 0
     }
-    /<\/TestPlan>/ { tras_testplan = 1 }' "$PLAN" > /tmp/plan.jmx
-  # Mismos argumentos, pero con la copia en lugar del plan original
-  for arg in "$@"; do
-    shift
-    [ "$arg" = "$PLAN" ] && arg=/tmp/plan.jmx
-    set -- "$@" "$arg"
-  done
+    /<\/TestPlan>/ { tras_testplan = 1 }' "$PLAN" > "$COPIA"
 fi
+
+# Los planes de 2-processing esperan entre petición y petición la pausa observada en los
+# logs (stormThinkMs). La propiedad factor_pausa del escenario la escala: 1 = pausas reales
+# (por defecto), 0 = sin pausas, cada usuario aprieta al máximo (escenario rotura).
+if grep -q 'Long.parseLong(vars.get("stormThinkMs") ?: "0")' "$COPIA"; then
+  sed -i 's|Long.parseLong(vars.get("stormThinkMs") ?: "0")|Math.round(Long.parseLong(vars.get("stormThinkMs") ?: "0") * Double.parseDouble(props.getProperty("factor_pausa", "1")))|' "$COPIA"
+fi
+
+# Mismos argumentos, pero con la copia en lugar del plan original
+for arg in "$@"; do
+  shift
+  [ "$arg" = "$PLAN" ] && arg="$COPIA"
+  set -- "$@" "$arg"
+done
 
 jmeter "$@" || { echo "JMeter ha terminado con error: no se puede evaluar la prueba."; exit 2; }
 [ -s "$JTL" ] || { echo "La prueba no ha generado resultados."; exit 2; }
