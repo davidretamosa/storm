@@ -7,6 +7,9 @@ class Context:
 
     def __init__(self, seed=0):
         self.seed = seed
+        # Dades que una millora deixa per a una altra sense editar aquest fitxer. Cadascuna hi escriu
+        # sota el seu nom (p. ex. shared["groups"]); la que les llegeix ha d'aguantar que no hi siguin.
+        self.shared = {}
 
 
 class Enhancement:
