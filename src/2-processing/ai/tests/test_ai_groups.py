@@ -151,6 +151,24 @@ def test_folds_never_test_on_training_sessions():
     assert sorted(s for _, test in folds for s in test) == sorted(ids)
 
 
+def test_gate_never_trains_on_the_visits_it_tests(tmp_path, monkeypatch):
+    """La porta agrupa cada tros només amb les seves sessions d'entrenament (si hi entressin les de prova, els
+    grups es validarien a si mateixos)."""
+    from ai.enhancements import groups_cluster
+    steps, ids = session_steps(parse_logs(str(write_log(tmp_path / "log.jsonl", two_kinds()))))
+    trained = []
+    original = groups_cluster.group_labels
+
+    def recorder(steps, train, seed):
+        trained.append(set(train))
+        return original(steps, train, seed)
+
+    monkeypatch.setattr(groups_cluster, "group_labels", recorder)
+    groups_cluster.heldout_gain(steps, ids, 0)
+    tested = [set(test) for _, test in split(ids, 0)]
+    assert len(trained) == 5 and all(not train & test for train, test in zip(trained, tested))
+
+
 def test_too_few_sessions_is_one_group(tmp_path):
     df = parse_logs(str(write_log(tmp_path / "log.jsonl", two_kinds()[:6])))
     groups, report = find_groups(df, seed=0)
@@ -376,6 +394,23 @@ def test_session_js_is_zero_for_the_same_traffic_and_one_for_disjoint(tmp_path):
     b = metrics.requests(parse_logs(str(write_log(tmp_path / "b.jsonl", [visit(["GET /z"], 1)] * 20))))
     assert session_scores(a, a) == {"session_js": 0.0, "session_length_wasserstein": 0.0, "session_length_ks": 0.0}
     assert session_scores(a, b)["session_js"] == pytest.approx(1)
+
+
+def test_one_type_log_treats_the_empty_session_like_get_steps(tmp_path):
+    """sessionId "" és una sessió per a get_steps: també ho ha de ser al log d'un sol tipus."""
+    from ai.bench.one_type_log import one_type_log
+    log = write_log(tmp_path / "log.jsonl", two_kinds())
+    log.write_text(log.read_text(encoding="utf-8").replace('"sessionId": "s0"', '"sessionId": ""'), encoding="utf-8")
+    steps, ids = session_steps(parse_logs(str(log)))
+    assert {l["sessionId"] for l in one_type_log(str(log), seed=0)} == set(ids) and "" in ids
+
+
+def test_recovery_on_the_reference_log_passes_the_agreed_threshold():
+    """El criteri signat: ARI >= 0,85 contra les 6 etiquetes de sessió (contra els 5 perfils surt més baix)."""
+    from ai.bench.recovery import ARI_THRESHOLD, recovery
+    result = recovery(str(ROOT / REFERENCE), 0)
+    assert ARI_THRESHOLD == 0.85 and result["unknown"] == 0
+    assert result["ari_6"] >= ARI_THRESHOLD and result["ari_6"] > result["ari_5"]
 
 
 def test_one_type_log_keeps_sessions_and_is_reproducible(tmp_path):

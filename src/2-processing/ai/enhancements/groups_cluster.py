@@ -169,8 +169,10 @@ def find_groups(df, seed=0, chain=None):
         if np.mean(gains) <= 0:
             report["one_group"] = "els grups no prediuen millor les visites noves que una sola cadena"
             labels = np.zeros(len(ids), dtype=int)
-    elif "one_group" not in report:
+    elif all(merge["why"] == "navega igual" for merge in report["merges"]):
         report["one_group"] = "tots els grups naveguen igual"
+    else:
+        report["one_group"] = "els grups naveguen igual o són massa petits per validar-los"
 
     # Grup 0 = el més gran (empat: el que surt abans), perquè el resultat es llegeixi igual cada vegada
     sizes = Counter(labels.tolist())

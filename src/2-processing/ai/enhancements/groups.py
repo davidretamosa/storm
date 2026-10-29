@@ -156,7 +156,8 @@ def groovy_text(text):
 
 
 def _json(data):
-    return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+    # ASCII pur (\\uXXXX): Groovy 3.0.20 pot corrompre un caràcter fora del BMP (un emoji) en un literal llarg
+    return json.dumps(data, ensure_ascii=True, separators=(",", ":"))
 
 
 def _bind(function, args, kwargs):
