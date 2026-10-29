@@ -33,6 +33,19 @@ public class SignupForm {
     @Positive
     private int seats;
 
+    @DecimalMin(value = "500")
+    private BigDecimal floor500;
+
+    @Positive
+    @DecimalMax(value = "0.5")
+    private BigDecimal tiny;
+
+    @Size(min = 40)
+    private String slogan;
+
+    @Size(max = 8)
+    private String nick;
+
     private Long groupId;
 
     private java.util.List<String> tags;

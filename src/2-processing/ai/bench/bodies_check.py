@@ -127,14 +127,19 @@ def summarize(runs, labels):
     return summary
 
 
-def markdown(summary):
+def markdown(summary, runs):
+    """La taula, amb la n de cada xifra quan no és el nombre d'execucions (una execució sense dades
+    no ha de fer baixar R sense que es vegi)."""
     blocks = list(summary)
-    lines = ["| mètrica | " + " | ".join(blocks) + " |", "|---|" + "---|" * len(blocks)]
+    lines = [f"Execucions: {runs}", "", "| mètrica | " + " | ".join(blocks) + " |", "|---|" + "---|" * len(blocks)]
     for name in summary[blocks[0]]:
         cells = []
         for block in blocks:
             ci = summary[block][name]
-            cells.append("—" if ci["n"] == 0 else f"{ci['mean']:.4g} [{ci['low']:.4g}, {ci['high']:.4g}]")
+            cell = "—" if ci["n"] == 0 else f"{ci['mean']:.4g} [{ci['low']:.4g}, {ci['high']:.4g}]"
+            if 0 < ci["n"] < runs:
+                cell += f" (n={ci['n']})"
+            cells.append(cell)
         lines.append(f"| {name} | " + " | ".join(cells) + " |")
     return "\n".join(lines) + "\n"
 
@@ -161,7 +166,7 @@ def main(argv=None):
     report = {"folder": str(folder), "log": str(log), "body_samplers": sorted(samplers), "runs": runs,
               "summary": summarize(runs, labels)}
     (folder / "bodies_check.json").write_text(json.dumps(report, indent=1, default=str), encoding="utf-8")
-    text = markdown(report["summary"])
+    text = markdown(report["summary"], len(runs))
     (folder / "bodies_check.md").write_text(text, encoding="utf-8")
     print(text)
     return report

@@ -83,19 +83,33 @@ try {
         body[target] = chosen
     }
 
-    // 3. «Únic»: prefix + testimoni + sufix; el comptador és de tot JMeter (tots els fils)
+    // 3. «Únic»: prefix + testimoni + sufix; el comptador és de tot JMeter (tots els fils).
+    //    Un camp que ha fixat la correlació no es toca. Amb llargada màxima, primer s'escurça el prefix i,
+    //    si no n'hi ha prou, el testimoni es queda en el comptador sol (únic dins d'aquesta execució).
+    //    Amb llargada mínima, s'omple amb "x" després del prefix.
     rule.unique.each { name, form ->
-        if (!body.containsKey(name)) {
+        if (!body.containsKey(name) || fixed.contains(name)) {
             return
         }
         props.putIfAbsent("stormAiCounter", new AtomicLong())
         props.putIfAbsent("stormAiRun", Long.toString(System.currentTimeMillis(), 36))
-        String token = props.get("stormAiRun") + "-" + props.get("stormAiCounter").incrementAndGet()
+        long count = props.get("stormAiCounter").incrementAndGet()
+        String token = props.get("stormAiRun") + "-" + count
         String prefix = form.prefix
         String suffix = form.suffix
         if (form.max != null) {
-            int room = (form.max as int) - token.length() - suffix.length()
+            int max = form.max as int
+            if (token.length() + suffix.length() > max) {
+                token = Long.toString(count, 36)
+            }
+            int room = max - token.length() - suffix.length()
             prefix = prefix.substring(0, Math.max(0, Math.min(prefix.length(), room)))
+        }
+        if (form.min != null) {
+            int missing = (form.min as int) - (prefix + token + suffix).length()
+            if (missing > 0) {
+                prefix = prefix + ("x" * missing)
+            }
         }
         body[name] = prefix + token + suffix
     }

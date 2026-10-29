@@ -127,28 +127,43 @@ def _number(value):
         return None   # p. ej. @Min/@Max, que el lector dels companys no llegeix (valors long)
 
 
-def number_range(model, annotations):
-    """Estreny el rang {"min", "max"} d'un camp numèric segons les seves validacions."""
-    low, high = model["min"], model["max"]
-    step = 10 ** -model["decimals"] if model["decimals"] else 1
+def annotated_bounds(annotations, step):
+    """(mínim, màxim) que diuen les validacions; None si no en diuen res."""
+    low = high = None
     for simple_name in ("DecimalMin", "Min"):
         found = validation(annotations, simple_name)
         value = _number(found["values"].get("value")) if found else None
         if value is not None:
-            inclusive = found["values"].get("inclusive", 1)
-            low = max(low, value if inclusive else value + step)
+            value = value if found["values"].get("inclusive", 1) else value + step
+            low = value if low is None else max(low, value)
     for simple_name in ("DecimalMax", "Max"):
         found = validation(annotations, simple_name)
         value = _number(found["values"].get("value")) if found else None
         if value is not None:
-            inclusive = found["values"].get("inclusive", 1)
-            high = min(high, value if inclusive else value - step)
+            value = value if found["values"].get("inclusive", 1) else value - step
+            high = value if high is None else min(high, value)
     if validation(annotations, "Positive"):
-        low = max(low, step)
+        low = step if low is None else max(low, step)
     if validation(annotations, "PositiveOrZero"):
-        low = max(low, 0)
-    if high < low:
-        high = low
+        low = 0 if low is None else max(low, 0)
+    return low, high
+
+
+def number_range(model, annotations):
+    """El rang {"min", "max"} d'un camp numèric: el de per defecte (payloads.default_field_model),
+    estret per les validacions. Si el de per defecte no hi cap, es mou cap on diuen les validacions."""
+    step = 10 ** -model["decimals"] if model["decimals"] else 1
+    width = model["max"] - model["min"]
+    low_a, high_a = annotated_bounds(annotations, step)
+    low = model["min"] if low_a is None else max(model["min"], low_a)
+    high = model["max"] if high_a is None else min(model["max"], high_a)
+    if low > high:
+        if high_a is None:                          # p. ej. @DecimalMin("500"): [500, 599]
+            high = low + width
+        elif low_a is None or low_a <= high_a:      # p. ej. @DecimalMax("0.5"): baixa fins al mínim que diuen
+            low = low_a if low_a is not None else high_a
+        else:                                       # validacions contradictòries: el mínim que demanen
+            high = low = low_a
     return {**model, "min": low, "max": high}
 
 
@@ -160,8 +175,11 @@ def text_model(name, annotations):
     size = validation(annotations, "Size")
     form = {"prefix": value + "-", "suffix": ""}
     if size:
+        # La forma porta la llargada: el PreProcessor l'ha de respectar també amb el testimoni a dins
         low, high = int(size["values"].get("min", 0)), size["values"].get("max")
         value = value.ljust(low, "x")
+        if low:
+            form["min"] = low
         if high is not None:
             value = value[:int(high)]
             form["max"] = int(high)

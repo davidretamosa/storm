@@ -45,7 +45,9 @@ class Enhancement(Base):
     def build_body_models(self, original, df, endpoints=None):
         every = original(df, endpoints)
         good = original(bodies_learn.successful(df), endpoints)
-        with_good_bodies = set(bodies_learn.bodies_by_request(bodies_learn.successful(df)))
+        # Peticions amb algun body 2xx que porta camps (si les 2xx només porten {}, mana el model dels companys)
+        with_good_bodies = {request for request, found in
+                            bodies_learn.bodies_by_request(bodies_learn.successful(df)).items() if any(found)}
         model = {request: good[request] if request in with_good_bodies else fields
                  for request, fields in every.items()}
 

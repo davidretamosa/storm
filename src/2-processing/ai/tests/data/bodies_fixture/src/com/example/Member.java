@@ -3,7 +3,7 @@ package com.example;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 
-// L'entitat generica de prova: "contact" no es pot repetir; "handle" si
+// L'entitat generica de prova: "contact", "slogan" i "nick" no es poden repetir; "handle" si
 @Entity
 public class Member {
     private Long id;
@@ -13,4 +13,10 @@ public class Member {
 
     @Column(unique = true)
     private String contact;
+
+    @Column(unique = true)
+    private String slogan;
+
+    @Column(unique = true)
+    private String nick;
 }

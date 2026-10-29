@@ -134,13 +134,20 @@ def text_form(texts):
         suffix = suffix[suffix.index("@"):]     # d'una adreça, només el domini
     elif any("@" in t for t in texts):
         suffix = ""
+    # JMeter interpreta ${...} dins del script (com a payloads.distribution, no es fica al pla)
+    if "${" in prefix:
+        prefix = ""
+    if "${" in suffix:
+        suffix = ""
     return {"prefix": prefix or DEFAULT_PREFIX, "suffix": suffix}
 
 
 def unique_fields(bodies):
-    """{camp: forma} dels camps de text amb prou valors i cap de repetit."""
+    """{camp: forma} dels camps de text amb prou valors i cap de repetit.
+
+    Els camps id en queden fora: un id l'ha de donar l'app (o la correlació), no l'inventa el pla."""
     result = {}
-    names = {name for body in bodies for name in body}
+    names = {name for body in bodies for name in body if not ID_FIELD.search(name)}
     for name in sorted(names):
         values = field_values(bodies, name)
         if len(values) < MIN_UNIQUE_VALUES or not all(isinstance(v, str) and v for v in values):
