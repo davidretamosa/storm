@@ -19,7 +19,14 @@ def build_think_times(df, samples=20, max_ms=120_000):
     frecuentes y alguna larga). Las pausas mayores que `max_ms` se recortan.
     """
     if df is None or df.empty:
-        return {}  # sin logs no hay pausas observadas
+        return {}
+
+    # Si los logs no tienen identificadores de sesión,
+    # no podemos calcular el tiempo entre peticiones del mismo usuario.
+    # Se utilizarán las pausas por defecto configuradas en main.py.
+    if "session_id" not in df.columns or df["session_id"].isna().all():
+        return {}
+
     steps = get_steps(df)
 
     # Hora de la siguiente petición de la misma sesión (igual que next_key, pero con la hora)

@@ -80,6 +80,29 @@ def count_from_logs(df):
     - start_counts: {petición: nº de sesiones que empiezan por ella}
     - transition_counts: {actual: {siguiente: nº de veces}}, con END al final de cada sesión
     """
+
+    # Si los logs no tienen identificadores de sesión,
+    # no podemos reconstruir las transiciones reales entre peticiones.
+    if "session_id" not in df.columns or df["session_id"].isna().all():
+
+        # Calculamos cuántas veces aparece cada petición HTTP.
+        frequencies = (
+            df["method"] + " " + df["endpoint"]
+        ).value_counts().to_dict()
+
+        # Utilizamos las frecuencias observadas como distribución inicial.
+        start_counts = frequencies.copy()
+
+        # Sin sesiones, generamos transiciones independientes
+        # basadas en la frecuencia global de cada petición.
+        # Estas transiciones son estimadas, no observadas.
+        transition_counts = {
+            endpoint: {**frequencies, END: 1}
+            for endpoint in frequencies
+        }
+
+        return start_counts, transition_counts
+    
     steps = get_steps(df)
 
     # Cómo empiezan las sesiones: la primera petición de cada una, y cuántas veces
