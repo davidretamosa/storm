@@ -53,7 +53,8 @@ def one_type_log(log, seed=0):
     think_times = build_think_times(df)
 
     lines = [json.loads(line) for line in Path(log).read_text(encoding="utf-8").splitlines() if line.strip()]
-    with_session = [line for line in lines if line.get("sessionId")]
+    # Amb sessió, com a get_steps: sessionId no nul (també "")
+    with_session = [line for line in lines if line.get("sessionId") is not None]
     by_request = {}
     for line in with_session:
         by_request.setdefault(f"{line['method']} {line['endpoint']}", []).append(line)
@@ -63,7 +64,7 @@ def one_type_log(log, seed=0):
         first.setdefault(line["sessionId"], line)
 
     rng = np.random.default_rng(seed)
-    output = [line for line in lines if not line.get("sessionId")]
+    output = [line for line in lines if line.get("sessionId") is None]
     for session, opening in first.items():
         moment = pd.Timestamp(opening["timestamp"])
         for request, pause_ms in walk(rng, model, think_times):

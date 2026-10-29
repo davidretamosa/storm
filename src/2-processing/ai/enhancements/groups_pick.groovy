@@ -8,8 +8,8 @@ import java.util.concurrent.ThreadLocalRandom
 
 def groups = vars.getObject("stormGroups")
 if (groups == null) {
-    def base = new JsonSlurper().parseText('''__BASE_MODEL_JSON__''')
-    def data = new JsonSlurper().parseText('''__GROUPS_JSON__''')
+    def base = new JsonSlurper().parseText(__BASE_MODEL_JSON__)
+    def data = new JsonSlurper().parseText(__GROUPS_JSON__)
     // Cada grup: el model de STORM amb el seu propi inici, transicions i pauses
     def models = data.groups.collect { group ->
         def model = new LinkedHashMap(base)

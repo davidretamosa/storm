@@ -6,6 +6,8 @@
    dona més silueta. La llavor (--ai-seed) fixa el resultat.
 2. Dos grups que naveguen igual es fusionen: Jensen-Shannon entre els seus parells (inici, petició, següent,
    fi) per sota de SAME_NAVIGATION. Un grup que només es diferencia per la pausa no canvia les seqüències.
+   Un grup de menys de MIN_GROUP sessions no es pot validar (no en queden per als trossos de prova): es fusiona
+   amb el grup que navega més com ell.
 3. Porta de validació: els grups s'han de guanyar el lloc prediint visites que no han vist. Amb 4 de 5 trossos
    es fan els grups i una cadena per grup; amb el 5è es compara el model del pla (triar un grup pel seu pes i
    seguir-ne la cadena) amb una sola cadena. Si de mitjana els grups no prediuen millor, queda un sol grup.
@@ -22,6 +24,7 @@ from traffic_model.markov import END, build_markov_model
 MAX_GROUPS = 8
 SAME_NAVIGATION = 0.2   # decidit pel Bernat al pla del T-2
 FOLDS = 5
+MIN_GROUP = 2 * FOLDS   # el mateix mínim de sessions que demana find_groups per validar res
 FLOOR = 1e-6            # probabilitat mínima d'una transició mai vista, igual per a tots els models
 START = "<inici>"
 
@@ -68,22 +71,30 @@ def js_distance(a, b):
     return float(distance.jensenshannon(p / p.sum(), q / q.sum(), base=2))
 
 
-def merge_alike(labels, sequences, threshold=SAME_NAVIGATION):
-    """(etiquetes, fusions): fusiona, d'una en una, la parella de grups que navega més igual mentre la seva
-    distància sigui menor que `threshold`."""
+def merge_alike(labels, sequences, threshold=SAME_NAVIGATION, min_size=MIN_GROUP):
+    """(etiquetes, fusions): fusiona, d'una en una,
+    - la parella de grups que navega més igual, mentre la seva distància sigui menor que `threshold`;
+    - després, el grup més petit amb menys de `min_size` sessions, amb el que navega més com ell."""
     labels = np.array(labels)
     merges = []
     while True:
         groups = sorted(set(labels.tolist()))
+        if len(groups) < 2:
+            return labels, merges
         counts = {g: navigation(s for s, label in zip(sequences, labels) if label == g) for g in groups}
-        pairs = [(js_distance(counts[a], counts[b]), a, b) for i, a in enumerate(groups) for b in groups[i + 1:]]
-        if not pairs:
-            return labels, merges
-        distance, a, b = min(pairs)
-        if distance >= threshold:
-            return labels, merges
-        labels[labels == b] = a
-        merges.append({"groups": [int(a), int(b)], "js": round(distance, 4)})
+        sizes = {g: int((labels == g).sum()) for g in groups}
+        distance = {(a, b): js_distance(counts[a], counts[b]) for i, a in enumerate(groups) for b in groups[i + 1:]}
+        js, a, b = min((d, a, b) for (a, b), d in distance.items())
+        reason = "navega igual"
+        if js >= threshold:
+            small = min(groups, key=lambda g: (sizes[g], g))
+            if sizes[small] >= min_size:
+                return labels, merges
+            js, a, b = min((d, *pair) for pair, d in distance.items() if small in pair)
+            reason = f"massa petit ({sizes[small]} sessions)"
+        keep, gone = (a, b) if sizes[a] >= sizes[b] else (b, a)
+        labels[labels == gone] = keep
+        merges.append({"groups": [int(keep), int(gone)], "js": round(js, 4), "why": reason})
 
 
 def group_labels(steps, ids, seed):
@@ -104,23 +115,31 @@ def log_likelihood(sequence, model):
     return total
 
 
-def heldout_gain(steps, ids, seed, folds=FOLDS):
-    """Per a cada tros: quant millor prediuen els grups les visites que no han vist que una sola cadena
-    (log-versemblança mitjana per visita; > 0 vol dir que els grups ajuden)."""
+def split(ids, seed, folds=FOLDS):
+    """[(entrenament, prova)] per a cada tros: cada sessió és a la prova d'un sol tros i mai al seu entrenament."""
     order = np.random.default_rng(seed).permutation(len(ids)) % folds
+    return [([s for s, f in zip(ids, order) if f != fold], [s for s, f in zip(ids, order) if f == fold])
+            for fold in range(folds)]
+
+
+def heldout_gain(steps, ids, seed, chain=None, folds=FOLDS):
+    """Per a cada tros: quant millor prediuen els grups les visites que no han vist que una sola cadena
+    (log-versemblança mitjana per visita; > 0 vol dir que els grups ajuden).
+
+    chain: els arguments de build_markov_model del pla (min_probability, endpoints, jar_weight), perquè les
+    cadenes que es validen siguin com les que hi aniran."""
+    chain = chain or {}
     sequences = session_sequences(steps, ids)
     gains = []
-    for fold in range(folds):
-        train = [s for s, f in zip(ids, order) if f != fold]
-        test = [s for s, f in zip(ids, order) if f == fold]
+    for train, test in split(ids, seed, folds):
         labels, _ = group_labels(steps, train, seed)
 
-        one = build_markov_model(steps[steps["session_id"].isin(set(train))])
+        one = build_markov_model(steps[steps["session_id"].isin(set(train))], **chain)
         groups = sorted(set(labels.tolist()))
         models, weights = [], []
         for g in groups:
             members = {s for s, label in zip(train, labels) if label == g}
-            models.append(build_markov_model(steps[steps["session_id"].isin(members)]))
+            models.append(build_markov_model(steps[steps["session_id"].isin(members)], **chain))
             weights.append(len(members) / len(train))
 
         gain = []
@@ -132,8 +151,10 @@ def heldout_gain(steps, ids, seed, folds=FOLDS):
     return gains
 
 
-def find_groups(df, seed=0):
-    """({sessió: grup}, informe). Els grups van de 0 (el més gran) a n - 1; tot 0 vol dir un sol grup."""
+def find_groups(df, seed=0, chain=None):
+    """({sessió: grup}, informe). Els grups van de 0 (el més gran) a n - 1; tot 0 vol dir un sol grup.
+
+    chain: els arguments de build_markov_model del pla, per a la porta de validació (heldout_gain)."""
     steps, ids = session_steps(df)
     report = {"sessions": len(ids)}
     if len(ids) < 2 * FOLDS:
@@ -143,7 +164,7 @@ def find_groups(df, seed=0):
     labels, info = group_labels(steps, ids, seed)
     report.update(info)
     if len(set(labels.tolist())) > 1:
-        gains = heldout_gain(steps, ids, seed)
+        gains = heldout_gain(steps, ids, seed, chain)
         report["heldout_gain"] = gains
         if np.mean(gains) <= 0:
             report["one_group"] = "els grups no prediuen millor les visites noves que una sola cadena"

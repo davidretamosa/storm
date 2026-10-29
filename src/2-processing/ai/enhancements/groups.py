@@ -28,6 +28,9 @@ PICK_SCRIPT = Path(__file__).with_name("groups_pick.groovy")
 SESSION_START = "Elegir primera petición"   # el JSR223PreProcessor dels companys que comença cada sessió
 NAME = "STORM-IA: triar grup de visita"
 EMBEDDED = ("parseText('''", "''')")       # on va el model incrustat als scripts (generator._groovy)
+# Groovy no admet literals de més de 65.535 unitats (i la JVM, de més de 65.535 bytes): el JSON va a trossos
+# de CHUNK caràcters, que fins i tot amb 6 bytes per caràcter hi caben
+CHUNK = 10_000
 
 
 class Enhancement(Base):
@@ -54,7 +57,8 @@ class Enhancement(Base):
             _say("no hi ha logs: sense grups, el pla queda com sense la millora")
             return model
 
-        groups, report = find_groups(df, self.ctx.seed)
+        chain = {name: call.arguments[name] for name in ("min_probability", "endpoints", "jar_weight")}
+        groups, report = find_groups(df, self.ctx.seed, chain)
         self.ctx.shared["groups"] = report
         count = max(groups.values()) + 1
         if count == 1:
@@ -65,6 +69,8 @@ class Enhancement(Base):
         states = set(model["states"])
         for members in self.members:
             group_model = original(*_with(call, df=df[df["session_id"].isin(members)]))
+            # Amb les funcions dels companys tal qual, un subconjunt de sessions no pot donar estats nous; una capa
+            # d'una altra millora per sota sí que podria, i llavors el Switch del pla no els trobaria
             if not set(group_model["states"]) <= states or not set(group_model["transitions"]) <= states:
                 raise HookError("un grup té estats que no són al model global: el Switch del pla no els trobaria")
             self.models.append(group_model)
@@ -98,7 +104,7 @@ class Enhancement(Base):
             raise HookError(f"el pla hauria de tenir un sol «{SESSION_START}» i en té {len(starts)}")
         start = starts[0]
         parent = jmx_post.parent_of(root, start)
-        base = embedded_model(start.find("stringProp[@name='script']").text)
+        base = json.loads(unescape(embedded_model(start.find("stringProp[@name='script']").text)))
 
         total = sum(len(members) for members in self.members)
         data = {
@@ -108,7 +114,7 @@ class Enhancement(Base):
         }
         head, rest = PICK_SCRIPT.read_text(encoding="utf-8").split("__BASE_MODEL_JSON__")
         middle, tail = rest.split("__GROUPS_JSON__")
-        script = head + base + middle + _groovy_string(data) + tail
+        script = head + groovy_text(_json(base)) + middle + groovy_text(_json(data)) + tail
 
         element = ET.Element("JSR223PreProcessor", {"guiclass": "TestBeanGUI", "testclass": "JSR223PreProcessor",
                                                      "testname": NAME})
@@ -129,10 +135,28 @@ def embedded_model(script):
     return script[begin:script.index(closing, begin)]
 
 
-def _groovy_string(data):
-    """JSON dins d'un '''...''' de Groovy, escapat igual que fa jmx_generator/generator.py (_groovy)."""
-    text = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
-    return text.replace("\\", "\\\\").replace("'''", "\\'\\'\\'")
+def unescape(literal):
+    """El text d'un literal '''...''' de Groovy: cada barra fa que el caràcter següent valgui tal qual
+    (jmx_generator/generator.py només hi escapa barres i cometes)."""
+    text, i = [], 0
+    while i < len(literal):
+        if literal[i] == "\\" and i + 1 < len(literal):
+            i += 1
+        text.append(literal[i])
+        i += 1
+    return "".join(text)
+
+
+def groovy_text(text):
+    """Una expressió de Groovy que val `text`: ['''tros''', '''tros''', ...].join(), amb les barres i totes
+    les cometes escapades (cap tros no pot tancar el literal, ni partir un escapament)."""
+    pieces = [text[i:i + CHUNK] for i in range(0, len(text), CHUNK)] or [""]
+    quoted = ["'''" + piece.replace("\\", "\\\\").replace("'", "\\'") + "'''" for piece in pieces]
+    return "[" + ", ".join(quoted) + "].join()"
+
+
+def _json(data):
+    return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
 
 
 def _bind(function, args, kwargs):

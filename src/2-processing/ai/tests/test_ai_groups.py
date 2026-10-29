@@ -3,21 +3,31 @@
 Els logs sintètics fan servir endpoints inventats (/a, /b...): la millora no sap res de cap app.
 """
 import json
+import re
+import subprocess
 import xml.etree.ElementTree as ET
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pytest
 
 from ai import jmx_post
-from ai.enhancements.groups import NAME, SESSION_START, embedded_model
-from ai.enhancements.groups_cluster import find_groups
+from ai.bench import jmeter
+from ai.enhancements.groups import CHUNK, NAME, SESSION_START, embedded_model, groovy_text, unescape
+from ai.enhancements.groups_cluster import MIN_GROUP, find_groups, split
 from ai.enhancements.groups_features import session_features, session_steps
 from ai.hooks import HookError
-from ai.tests.support import AI, INPUTS, MAIN, ROOT, generate
+from ai.tests.support import AI, INPUTS, JAR, MAIN, ROOT, generate
 from log_parser.parser import parse_logs
 
 REFERENCE = "ai/bench/data/bankapp_vall_pic_3h.jsonl"
+NEXT_REQUEST = "Elegir siguiente petición (Markov)"
+HARNESS = ROOT / "ai" / "tests" / "groups_walk.groovy"
+JMETER_LIB = jmeter.jmeter_binary().parent.parent / "lib"
+# Arguments de main.py que no són els per defecte: el pla amb --jar (JSON dels grups de més de 64K)
+JAR_ARGS = ["--logs", REFERENCE, "--jar", JAR, "--session", "--min-probability", "0.05", "--max-steps", "7",
+            "--jar-weight", "3", "--default-pause", "0-0"]
 T0 = datetime(2026, 10, 1, 9, 0, tzinfo=timezone.utc)
 
 
@@ -121,6 +131,26 @@ def test_same_seed_same_groups(tmp_path):
     assert find_groups(df, seed=3) == find_groups(df, seed=3)
 
 
+def test_groups_too_small_to_validate_are_merged(tmp_path):
+    """Una visita rara (2 sessions) no pot fer grup: no en queden per provar-la. El verificador ho va trobar
+    amb la bankapp (una sola sessió de 11 passos) i amb la pseudosessió "" dels logs."""
+    odd = [visit(["DELETE /z", "GET /a", "DELETE /z", "GET /b"], 1)] * 2
+    df = parse_logs(str(write_log(tmp_path / "log.jsonl", two_kinds() + odd)))
+    groups, report = find_groups(df, seed=0)
+    sizes = Counter(groups.values())
+    assert len(sizes) == 2 and min(sizes.values()) >= MIN_GROUP
+    assert any("massa petit" in merge["why"] for merge in report["merges"])
+
+
+def test_folds_never_test_on_training_sessions():
+    ids = [f"s{n}" for n in range(23)]
+    folds = split(ids, seed=0)
+    assert len(folds) == 5
+    for train, test in folds:
+        assert not set(train) & set(test) and sorted(train + test) == sorted(ids)
+    assert sorted(s for _, test in folds for s in test) == sorted(ids)
+
+
 def test_too_few_sessions_is_one_group(tmp_path):
     df = parse_logs(str(write_log(tmp_path / "log.jsonl", two_kinds()[:6])))
     groups, report = find_groups(df, seed=0)
@@ -153,6 +183,24 @@ def _script(element):
     return element.find("stringProp[@name='script']").text
 
 
+def groovy_texts(script):
+    """Els textos de les expressions ['''...''', ...].join() d'un script del selector, en ordre."""
+    texts = []
+    for expression in re.findall(r"parseText\((\[.*?\]\.join\(\))\)", script, flags=re.S):
+        pieces = re.findall(r"'''((?:[^'\\]|\\.)*)'''", expression, flags=re.S)
+        texts.append("".join(unescape(piece) for piece in pieces))
+    return texts
+
+
+def picker_data(plan):
+    """(model base, {pesos, grups}) del selector d'un pla, i el model que porten els scripts dels companys."""
+    root = jmx_post.read(plan).getroot()
+    picker = next(e for e in root.iter("JSR223PreProcessor") if e.get("testname") == NAME)
+    start = next(e for e in root.iter("JSR223PreProcessor") if e.get("testname") == SESSION_START)
+    base, data = (json.loads(text) for text in groovy_texts(_script(picker)))
+    return base, data, json.loads(unescape(embedded_model(_script(start))))
+
+
 def test_plan_adds_only_the_group_picker(reference_groups_plan):
     main, groups = (jmx_post.read(p).getroot() for p in reference_groups_plan)
     pickers = [e for e in groups.iter("JSR223PreProcessor") if e.get("testname") == NAME]
@@ -169,14 +217,8 @@ def test_plan_adds_only_the_group_picker(reference_groups_plan):
 
 
 def test_plan_group_models_fit_the_global_model(reference_groups_plan):
-    root = jmx_post.read(reference_groups_plan[1]).getroot()
-    picker = next(e for e in root.iter("JSR223PreProcessor") if e.get("testname") == NAME)
-    start = next(e for e in root.iter("JSR223PreProcessor") if e.get("testname") == SESSION_START)
-    script = _script(picker)
-    # El model base és el mateix que porten els scripts dels companys
-    assert embedded_model(script) == embedded_model(_script(start))
-    base = json.loads(embedded_model(script))
-    data = json.loads(script.split("parseText('''")[2].split("''')")[0])
+    base, data, teammates = picker_data(reference_groups_plan[1])
+    assert base == teammates      # el model base és el mateix que porten els scripts dels companys
 
     assert len(data["groups"]) == 7 and sum(data["weights"]) == pytest.approx(1)
     for group in data["groups"]:
@@ -193,6 +235,108 @@ def test_plan_keeps_one_thread_group_and_vusers(reference_groups_plan):
     threads = ".//ThreadGroup/stringProp[@name='ThreadGroup.num_threads']"
     assert groups.find(threads).text == main.find(threads).text
     assert groups.find(threads).text.startswith("${__P(vusers,")
+
+
+@pytest.fixture(scope="module")
+def jar_groups_plan(tmp_path_factory):
+    return generate(AI, ["--ai-groups", *JAR_ARGS], tmp_path_factory.mktemp("jar") / "groups.jmx")
+
+
+def _close(a, b):
+    """Igualtat de models amb els números a 1e-12 (l'ordre de suma d'un set pot canviar l'últim decimal)."""
+    if isinstance(a, dict):
+        return isinstance(b, dict) and set(a) == set(b) and all(_close(a[k], b[k]) for k in a)
+    if isinstance(a, list):
+        return isinstance(b, list) and len(a) == len(b) and all(_close(x, y) for x, y in zip(a, b))
+    return a == pytest.approx(b, rel=1e-12)
+
+
+def test_group_models_are_the_teammates_chain_with_the_plan_arguments(jar_groups_plan):
+    """Cada grup = build_markov_model + build_think_times + add_default_pauses dels companys sobre les seves
+    sessions, amb els mateixos arguments que main.py (aquí, cap dels de per defecte)."""
+    from jar_parser.parser import parse_jar
+    from traffic_model.markov import build_markov_model
+    from traffic_model.session import remove_session_requests
+    from traffic_model.think_time import add_default_pauses, build_think_times
+
+    df, endpoints = remove_session_requests(parse_logs(str(ROOT / REFERENCE)), parse_jar(str(ROOT / JAR)),
+                                            "/api/sessions")
+    groups, _ = find_groups(df, 0, {"min_probability": 0.05, "endpoints": endpoints, "jar_weight": 3})
+    _, data, _ = picker_data(jar_groups_plan)
+    assert len(data["groups"]) == len(set(groups.values())) > 1
+    for g, group in enumerate(data["groups"]):
+        sub = df[df["session_id"].isin({s for s, x in groups.items() if x == g})]
+        model = build_markov_model(sub, 0.05, 7, endpoints=endpoints, jar_weight=3)
+        think = add_default_pauses(build_think_times(sub), model, [0])
+        assert _close(group, {"start": model["start"], "transitions": model["transitions"], "think_time_ms": think})
+        assert data["weights"][g] == pytest.approx(sub["session_id"].nunique() / df["session_id"].nunique())
+
+
+def test_gate_validates_the_chains_of_the_plan(monkeypatch, tmp_path):
+    """La porta de validació fa les cadenes amb els mateixos arguments que el pla (--jar, --min-probability,
+    --jar-weight), no amb els de per defecte."""
+    from ai import cli
+    from ai.enhancements import groups_cluster
+
+    seen = []
+    original = groups_cluster.build_markov_model
+
+    def recorder(df, **kwargs):
+        seen.append(kwargs)
+        return original(df, **kwargs)
+
+    monkeypatch.setattr(groups_cluster, "build_markov_model", recorder)
+    monkeypatch.chdir(ROOT)
+    cli.run(["--ai-groups", *JAR_ARGS, "--output", str(tmp_path / "plan.jmx")])
+    assert seen and all(k["min_probability"] == 0.05 and k["jar_weight"] == 3 and k["endpoints"] for k in seen)
+
+
+def walk(plan, folder, sessions):
+    """Les sessions que farien els scripts del pla (groups_walk.groovy, motor JSR223 de JMeter)."""
+    root = jmx_post.read(plan).getroot()
+    folder.mkdir(parents=True, exist_ok=True)
+    for short, name in {"pick": NAME, "start": SESSION_START, "next": NEXT_REQUEST}.items():
+        element = next(e for e in root.iter() if e.get("testname") == name)
+        (folder / f"{short}.groovy").write_text(_script(element), encoding="utf-8")
+    classpath = f"{JMETER_LIB}/*:{JMETER_LIB}/ext/ApacheJMeter_core.jar"
+    result = subprocess.run(["java", "-cp", classpath, "groovy.ui.GroovyMain", str(HARNESS), str(folder),
+                             str(sessions)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr[-3000:]
+    return [json.loads(line) for line in (folder / "walks.jsonl").read_text(encoding="utf-8").splitlines()]
+
+
+@pytest.mark.skipif(not (JMETER_LIB / "ext" / "ApacheJMeter_core.jar").exists(), reason="no hi ha JMeter local")
+@pytest.mark.parametrize("which", ["reference", "jar"])
+def test_groovy_sessions_follow_the_chosen_group(which, reference_groups_plan, jar_groups_plan, tmp_path):
+    """El Groovy de debò: compila (també amb el JSON de més de 64K del pla amb --jar), tria cada grup amb el
+    seu pes i cada sessió només fa el que el seu grup permet, amb les seves pauses."""
+    plan = reference_groups_plan[1] if which == "reference" else jar_groups_plan
+    base, data, _ = picker_data(plan)
+    if which == "jar":
+        assert len(json.dumps(data)) > 65_535 > CHUNK      # el cas que el verificador va trobar trencat
+    walks = walk(plan, tmp_path / "walk", 4000)
+
+    counts = Counter(int(w["group"]) for w in walks)
+    for g, weight in enumerate(data["weights"]):
+        assert counts[g] / len(walks) == pytest.approx(weight, abs=0.03)
+    for w in walks:
+        group, steps = data["groups"][int(w["group"])], w["steps"]
+        assert group["start"].get(steps[0][0], 0) > 0 and steps[0][1] == 0
+        assert all(index == base["states"].index(state) for state, _, index in steps)
+        assert len(steps) <= base["max_steps"]
+        for (state, _, _), (following, pause, _) in zip(steps, steps[1:]):
+            assert group["transitions"][state].get(following, 0) > 0
+            assert pause in group["think_time_ms"][state][following]
+        if len(steps) < base["max_steps"]:
+            assert group["transitions"][steps[-1][0]].get("END", 0) > 0
+
+
+def test_groovy_text_survives_quotes_backslashes_and_size():
+    text = ("a\'''b\\\"é😀$x'" * 4000)[:3 * CHUNK + 7]
+    expression = groovy_text(text)
+    pieces = re.findall(r"'''((?:[^'\\]|\\.)*)'''", expression, flags=re.S)
+    assert len(pieces) == 4 and "".join(unescape(piece) for piece in pieces) == text
+    assert expression.startswith("['''") and expression.endswith("'''].join()")
 
 
 def test_embedded_model_fails_loud_without_model():
