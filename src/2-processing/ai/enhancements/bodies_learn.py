@@ -142,6 +142,20 @@ def text_form(texts):
     return {"prefix": prefix or DEFAULT_PREFIX, "suffix": suffix}
 
 
+def fixed_value(form, middle="storm"):
+    """Un valor amb la forma d'un camp únic (prefix + middle + sufix), amb la llargada que diu la forma.
+    Com el PreProcessor: amb màxim, primer s'escurça el prefix; amb mínim, s'omple amb "x" després del prefix."""
+    prefix, suffix = form["prefix"], form["suffix"]
+    if form.get("max") is not None:
+        high = int(form["max"])
+        middle = middle[:max(0, high - len(suffix))]
+        prefix = prefix[:max(0, high - len(middle) - len(suffix))]
+    value = prefix + middle + suffix
+    if form.get("min") is not None and len(value) < int(form["min"]):
+        value = prefix + "x" * (int(form["min"]) - len(value)) + middle + suffix
+    return value
+
+
 def unique_fields(bodies):
     """{camp: forma} dels camps de text amb prou valors i cap de repetit.
 

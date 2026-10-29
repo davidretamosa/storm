@@ -56,8 +56,9 @@ def same_account(received):
 
 
 def repeated_emails(received):
+    """(repetits, correus). Sense cap correu, els repetits són NaN: un 0 diria que s'ha mesurat."""
     emails = [b["email"] for b in bodies_of(received, USERS) if b.get("email")]
-    return len(emails) - len(set(emails)), len(emails)
+    return (len(emails) - len(set(emails)) if emails else float("nan")), len(emails)
 
 
 def amounts(df, request):

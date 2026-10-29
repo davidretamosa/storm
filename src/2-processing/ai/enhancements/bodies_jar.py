@@ -22,7 +22,8 @@ No s'entenen (vegeu l'informe): @Pattern i les validacions que són mètodes (@A
 import zipfile
 
 from jar_parser.class_file import Reader, descriptor_to_type, read_attributes, read_constant_pool
-from traffic_model.payloads import default_field_model
+from ai.enhancements.bodies_learn import fixed_value
+from traffic_model.payloads import ID_FIELD, default_field_model
 
 ACC_STATIC = 0x0008
 
@@ -169,11 +170,10 @@ def number_range(model, annotations):
 
 def text_model(name, annotations):
     """(valor fix, forma per fer-lo únic) d'un camp de text."""
-    if validation(annotations, "Email"):
-        return EMAIL_PREFIX + "storm" + EMAIL_SUFFIX, {"prefix": EMAIL_PREFIX, "suffix": EMAIL_SUFFIX}
+    address = validation(annotations, "Email")
     value = "storm-" + name
+    form = {"prefix": EMAIL_PREFIX, "suffix": EMAIL_SUFFIX} if address else {"prefix": value + "-", "suffix": ""}
     size = validation(annotations, "Size")
-    form = {"prefix": value + "-", "suffix": ""}
     if size:
         # La forma porta la llargada: el PreProcessor l'ha de respectar també amb el testimoni a dins
         low, high = int(size["values"].get("min", 0)), size["values"].get("max")
@@ -183,6 +183,8 @@ def text_model(name, annotations):
         if high is not None:
             value = value[:int(high)]
             form["max"] = int(high)
+    if address:
+        value = fixed_value(form)
     return value, form
 
 
@@ -204,7 +206,7 @@ def dto_body(classes, class_name, unique=frozenset()):
         if java_type == "String":
             value, form = text_model(name, annotations)
             fields[name] = {"type": "choice", "values": [[value, 1.0]], "presence": 1.0}
-            if name in unique:
+            if name in unique and not ID_FIELD.search(name):    # un id l'ha de donar l'app, no l'inventa el pla
                 unique_forms[name] = form
             continue
         model = default_field_model(name, java_type)

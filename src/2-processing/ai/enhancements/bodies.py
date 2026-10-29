@@ -90,12 +90,13 @@ class Enhancement(Base):
 
 def hide_unique_values(model, rules):
     """Els camps únics no porten cap valor del log al .jmx: el PreProcessor els fabrica tots.
-    El valor fix que queda (prefix + "storm" + sufix) ja té la forma bona, per si el PreProcessor no actua."""
+    El valor fix que queda (prefix + "storm" + sufix, amb la llargada de la forma) ja té la forma bona, per si
+    el PreProcessor no actua."""
     for request, rule in rules.items():
         for name, form in rule["unique"].items():
             spec = model.get(request, {}).get(name)
             if spec:
-                value = form["prefix"] + "storm" + form["suffix"]
+                value = bodies_learn.fixed_value(form)
                 model[request][name] = {"type": "choice", "values": [[value, 1.0]],
                                         "presence": spec.get("presence", 1.0)}
 

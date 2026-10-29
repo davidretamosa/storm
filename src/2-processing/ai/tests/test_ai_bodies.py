@@ -109,6 +109,8 @@ def test_unique_needs_enough_values_and_no_repeats():
     assert bodies_learn.unique_fields([{"code": f"c{n}"} for n in range(19)]) == {}      # un menys del mínim
     assert list(bodies_learn.unique_fields([{"code": f"c{n}"} for n in range(20)])) == ["code"]
     assert bodies_learn.unique_fields([{"code": f"c{n % 20}"} for n in range(25)]) == {}
+    assert bodies_learn.unique_fields([{"code": f"c{n}"} for n in range(25)] + [{"code": "c0"}]) == {}  # un sol repetit
+    assert bodies_learn.unique_fields([{"code": n} for n in range(25)]) == {}                          # no són textos
 
 
 def test_unique_leaves_id_fields_alone():
@@ -122,6 +124,16 @@ def test_text_form():
     assert bodies_learn.text_form(["ref-001", "ref-002"]) == {"prefix": "ref-00", "suffix": ""}
     assert bodies_learn.text_form(["a@one.test", "b@two.test"]) == {"prefix": "storm-", "suffix": ""}
     assert bodies_learn.text_form(["${x}1", "${x}2"]) == {"prefix": "storm-", "suffix": ""}   # JMeter ho interpretaria
+    assert bodies_learn.text_form(["a1${x}", "b2${x}"]) == {"prefix": "storm-", "suffix": ""}
+    assert bodies_learn.text_form(["ana.x@mail.test", "pep.x@mail.test"]) == {"prefix": "storm-",
+                                                                              "suffix": "@mail.test"}  # només el domini
+
+
+def test_fixed_value_has_the_form_and_the_length():
+    assert bodies_learn.fixed_value({"prefix": "storm.", "suffix": "@example.com"}) == "storm.storm@example.com"
+    assert bodies_learn.fixed_value({"prefix": "storm-nick-", "suffix": "", "max": 8}) == "stostorm"
+    assert len(bodies_learn.fixed_value({"prefix": "storm.", "suffix": "@example.com", "max": 20})) == 20
+    assert bodies_learn.fixed_value({"prefix": "p-", "suffix": "", "min": 10}) == "p-xxxstorm"
 
 
 def test_unique_values_from_the_log_do_not_reach_the_plan():
@@ -191,6 +203,10 @@ def test_dto_body_respects_the_validations(fixture_classes):
     assert unique == {"contact": {"prefix": "storm.", "suffix": "@example.com"},
                       "slogan": {"prefix": "storm-slogan-", "suffix": "", "min": 40},
                       "nick": {"prefix": "storm-nick-", "suffix": "", "max": 8}}
+    model = {"POST /x": model}
+    bodies.hide_unique_values(model, {"POST /x": {"unique": unique}})
+    assert len(model["POST /x"]["nick"]["values"][0][0]) <= 8          # el valor de reserva també respecta @Size
+    assert len(model["POST /x"]["slogan"]["values"][0][0]) >= 40
     assert bodies_jar.dto_body(fixture_classes, "com.example.Missing") is None
 
 
@@ -202,6 +218,36 @@ def test_number_range_moves_when_the_default_does_not_fit():
     assert bodies_jar.number_range(base, [ann("DecimalMin", value="0.5"), ann("DecimalMax", value="0.8")]) == \
         {**base, "min": 0.5, "max": 0.8}
     assert bodies_jar.number_range(base, [ann("Min", value=None)]) == base     # @Min llegit sense valor (long)
+    contradictory = bodies_jar.number_range(base, [ann("DecimalMin", value="5"), ann("DecimalMax", value="2")])
+    assert (contradictory["min"], contradictory["max"]) == (5, 5)              # el mínim que demanen
+
+
+def test_email_respects_size():
+    annotations = [{"type": "jakarta.validation.constraints.Email", "values": {}},
+                   {"type": "jakarta.validation.constraints.Size", "values": {"max": 20}}]
+    value, form = bodies_jar.text_model("contact", annotations)
+    assert form == {"prefix": "storm.", "suffix": "@example.com", "max": 20}
+    assert len(value) <= 20 and value.endswith("@example.com")
+
+
+def test_dto_never_makes_an_id_unique():
+    classes = {"X": {"name": "X", "annotations": [], "fields": [
+        {"name": name, "type": "java.lang.String", "static": False, "annotations": []} for name in ("ownerId", "code")]}}
+    _, unique = bodies_jar.dto_body(classes, "X", {"ownerId", "code"})
+    assert list(unique) == ["code"]
+
+
+def test_jar_libraries_are_skipped(tmp_path):
+    """Les classes de BOOT-INF/lib/ són llibreries, no l'app."""
+    import zipfile
+    with zipfile.ZipFile(FIXTURE_JAR) as source:
+        entry = next(name for name in source.namelist() if name.endswith("SignupForm.class"))
+        data = source.read(entry)
+    for folder, expected in (("BOOT-INF/lib/", {}), ("BOOT-INF/classes/", {"com.example.SignupForm"})):
+        jar = tmp_path / "app.jar"
+        with zipfile.ZipFile(jar, "w") as target:
+            target.writestr(folder + "com/example/SignupForm.class", data)
+        assert set(bodies_jar.read_classes(jar)) == set(expected)
 
 
 def test_empty_log_bodies_are_built_from_the_dto():
@@ -308,6 +354,17 @@ def test_groovy_different_keeps_the_correlated_field_when_it_is_second(tmp_path)
 
 
 @needs_groovy
+def test_groovy_different_leaves_two_correlated_fields_alone(tmp_path):
+    """Si la correlació ha fixat tots dos camps, el PreProcessor no en toca cap (els ha donat l'app)."""
+    choices = {"type": "choice", "values": [[1, 0.5], [2, 0.5]]}     # hi hauria amb què tornar a sortejar
+    model = {"bodies": {"POST /items": {"sourceId": choices, "targetId": choices}},
+             "correlation": {"body_resources": {"POST /items": {"sourceId": "/sources", "targetId": "/targets"}}}}
+    cases = [{"state": "POST /items", "body": {"sourceId": 2, "targetId": 2}, "ids": {"/sources": 2, "/targets": 2}}]
+    out, _ = run_groovy(tmp_path, cases * 20, model=model)
+    assert all(b == {"sourceId": 2, "targetId": 2} for b in out)
+
+
+@needs_groovy
 def test_groovy_unique_leaves_a_correlated_field_alone(tmp_path):
     rules = {"POST /items": {"numbers": {}, "different": [],
                              "unique": {"ownerRef": {"prefix": "storm-", "suffix": ""}}}}
@@ -378,16 +435,21 @@ def log = new Expando()
 log.error = { String message, Throwable t = null -> System.err.println("ERROR " + message) }
 def input = new JsonSlurper().parse(new File(args[1]))
 def text = new File(args[0]).text
+def modelJson = JsonOutput.toJson(input.model)
+def state = input.state as String
+def bodyJson = JsonOutput.toJson(input.body)
+int calls = input.calls as int
 def results = Collections.synchronizedList([])
 def pool = Executors.newFixedThreadPool(input.threads as int)
 def futures = (1..(input.threads as int)).collect {
     pool.submit({
-        def vars = new Vars()          // com a JMeter: unes vars per fil
+        def vars = new Vars()          // com a JMeter: unes vars per fil, i un model per fil
+        def model = new JsonSlurper().parseText(modelJson)
         def script = new GroovyShell(new Binding([vars: vars, props: props, log: log])).parse(text)
-        (input.calls as int).times {
-            vars.putObject("stormModel", input.model)
-            vars.put("stormState", input.state)
-            vars.put("stormBody", JsonOutput.toJson(input.body))
+        calls.times {
+            vars.putObject("stormModel", model)
+            vars.put("stormState", state)
+            vars.put("stormBody", bodyJson)
             script.run()
             results << vars.get("stormBody")
         }
@@ -453,6 +515,26 @@ def test_plan_without_rules_has_no_preprocessor(tmp_path):
     """Només .jar (sense logs): no hi ha res après del log ni cap camp únic al .jar d'exemple."""
     plan = generate(AI, ["--ai-bodies", "--jar", JAR], tmp_path / "jar.jmx")
     assert bodies.TESTNAME not in plan.read_text(encoding="utf-8")
+
+
+def test_bodies_check_counts_and_shows_n():
+    from ai.bench import bodies_check
+    df = pd.DataFrame([{"method": "POST", "endpoint": "/api/transfers", "body": {"fromAccountId": 1, "toAccountId": 1}},
+                       {"method": "POST", "endpoint": "/api/transfers", "body": {"fromAccountId": 1, "toAccountId": 2}},
+                       {"method": "POST", "endpoint": "/api/users", "body": {"email": "a@x.test"}},
+                       {"method": "POST", "endpoint": "/api/users", "body": {"email": "a@x.test"}}])
+    assert bodies_check.same_account(df) == (1, 2)
+    assert bodies_check.repeated_emails(df) == (1, 2)
+    none, count = bodies_check.repeated_emails(df[df["endpoint"] != "/api/users"])
+    assert none != none and count == 0          # NaN: sense correus no s'ha mesurat res
+    runs = [{"A": {"acceptance_body": 50.0, "repeated_emails": float("nan")},
+             "B": {"acceptance_body": 90.0, "repeated_emails": 0}},
+            {"A": {"acceptance_body": 60.0, "repeated_emails": float("nan")},
+             "B": {"acceptance_body": 95.0}}]
+    text = bodies_check.markdown(bodies_check.summarize(runs, ["A", "B"]), len(runs))
+    assert text.startswith("Execucions: 2\n")
+    row = next(line for line in text.splitlines() if line.startswith("| repeated_emails"))
+    assert row.split("|")[2].strip() == "—" and "(n=1)" in row.split("|")[3]
 
 
 # ---------------------------------------------------------------------------
