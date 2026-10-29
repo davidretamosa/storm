@@ -17,13 +17,13 @@ import pandas as pd
 from ai import jmx_post
 
 PROPERTY = "curva_horaria"
-SLICE_SECONDS = 600     # franges de 10 minuts del log
+SLICE_SECONDS = 600     # franges d'uns 10 minuts del log (ajustades perquè el cobreixin just)
 MAX_SLICES = 288        # 2 dies de log; si n'és més, les franges s'eixamplen
 MIN_SESSION_SECONDS = 1  # una sessió d'una sola petició compta com si durés 1 s (si no, no pesaria gens)
 TIMER_NAME = "STORM-IA: curva horaria"
 
 # Groovy dins del .jmx: en castellà, com la resta del pla (el llegeix el laboratori)
-SCRIPT = """// STORM-IA (T-1) · curva horaria del log. Apagada salvo que se lance con -J%(property)s=1.
+SCRIPT = """// STORM-IA (T-1) · curva horaria del log. Apagada salvo que se lance con -J%(property)s=1 (otro valor: apagada).
 // Encendida: el log entero se comprime en la duración de la prueba (duration) y, en cada franja, solo
 // trabajan tantos hilos como sesiones abiertas tenía el log, en proporción a la franja más llena (que
 // tiene todos los hilos: el pico sigue siendo vusers). Un hilo al que no le toca espera hasta la primera
@@ -77,10 +77,11 @@ def concurrency_curve(df, slice_seconds=SLICE_SECONDS, max_slices=MAX_SLICES):
     starts = (sessions["min"] - first).dt.total_seconds().to_numpy()
     ends = np.maximum((sessions["max"] - first).dt.total_seconds().to_numpy(), starts + MIN_SESSION_SECONDS)
 
+    # Franges iguals que cobreixen el log just (~slice_seconds cadascuna): una última franja mig buida faria
+    # adormir els fils a la part de la prova que li toca, com si el log s'hi hagués quedat sense sessions
     span = ends.max()
-    count = max(1, math.ceil(span / slice_seconds))
-    if count > max_slices:
-        count, slice_seconds = max_slices, span / max_slices
+    count = min(max_slices, max(1, math.ceil(span / slice_seconds)))
+    slice_seconds = span / count
     edges = np.arange(count + 1) * slice_seconds
 
     # Segons que cada sessió és oberta dins de cada franja (sessions x franges), sumats per franja

@@ -45,6 +45,7 @@ class Enhancement(Base):
         super().__init__(ctx)
         self.log = None     # el log sencer, tal com surt de parse_logs
         self.curve = None   # traffic_curve.concurrency_curve, si el log té sessions
+        self.side_path = None
 
     def wraps(self):
         return {
@@ -74,10 +75,17 @@ class Enhancement(Base):
             "reference_durations": traffic_stats.reference_durations(self.log),
             "error_rates": traffic_stats.error_rates(self.log),
         }
-        path = side_file(_argument(original, args, kwargs, "output_path"))
-        path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        self.side_path = side_file(_argument(original, args, kwargs, "output_path"))
+        self.side_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         return result
 
     def edit_jmx(self, root):
-        if self.curve is not None:
+        if self.curve is None:
+            return
+        try:
             traffic_curve.add_timer(root, self.curve)
+        except ValueError:
+            # el .ai.json diria que la corba s'encén amb -Jcurva_horaria=1, i el pla no la porta
+            if self.side_path is not None:
+                self.side_path.unlink(missing_ok=True)
+            raise

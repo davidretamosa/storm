@@ -2,7 +2,7 @@
 
 Funcions sobre el DataFrame de `parse_logs`. No canvien mai el que reben: tornen una còpia o una dada nova.
 
-- net_pauses:          el log amb les pauses sense el temps de resposta del servidor (per a build_think_times);
+- net_pauses:          el log amb les pauses sense el temps de resposta de l'app (per a build_think_times);
 - successful:          les peticions que van anar bé (per a build_path_params);
 - error_rates:         la taxa de 4xx i de 5xx de cada petició (dada per al laboratori);
 - reference_durations: el p50 i el p95 de duration_ms de cada petició (dada per al laboratori, IA-09).
@@ -23,9 +23,11 @@ def request_keys(df):
 def net_pauses(df):
     """Còpia del log on cada pausa d'una sessió ja no porta el temps de resposta de la petició d'abans.
 
-    El log apunta quan arriba cada petició. Entre una i la següent hi ha el temps que triga el servidor
-    (duration_ms) i el que l'usuari s'hi pensa. JMeter ja espera la resposta abans de fer la pausa: si la
-    pausa també el portés, comptaria dues vegades. Pausa neta = pausa - duració de l'anterior, com a mínim 0.
+    El log apunta quan ACABA cada petició: el filtre de l'app escriu la línia en acabar (RequestLoggingFilter,
+    `Instant.now()` al `finally`; els logs JSONL i OTEL, els únics que porten duration_ms, en surten). Entre
+    una línia i la següent hi ha el que l'usuari s'hi pensa i el temps que triga el servidor a respondre la
+    petició següent. JMeter ja espera la resposta abans de fer la pausa: si la pausa també el portés,
+    comptaria dues vegades. Pausa neta = forat - duració de la petició que el tanca, com a mínim 0.
 
     No es calculen les pauses aquí: es mouen les hores de cada sessió perquè build_think_times (dels
     companys) les calculi com sempre, amb els seus quantils i el seu topall. Sense duration_ms, el log tal qual.
@@ -33,26 +35,29 @@ def net_pauses(df):
     if not has_column(df, "duration_ms") or not has_column(df, "session_id"):
         return df
 
-    steps = df.dropna(subset=["session_id"]).sort_values("timestamp", kind="stable")
+    result = df.reset_index(drop=True)                                    # còpia amb un índex sense repetits
+    steps = result.dropna(subset=["session_id"]).sort_values("timestamp", kind="stable")
     sessions = steps.groupby("session_id")
 
     gap = sessions["timestamp"].diff()                                    # NaT a la primera de cada sessió
-    previous_ms = sessions["duration_ms"].shift(1).fillna(0)              # duració de la petició d'abans
-    net = (gap - pd.to_timedelta(previous_ms, unit="ms")).clip(lower=pd.Timedelta(0)).fillna(pd.Timedelta(0))
+    own_ms = steps["duration_ms"].fillna(0).clip(lower=0)                 # duració de la petició que tanca el forat
+    net = (gap - pd.to_timedelta(own_ms, unit="ms")).clip(lower=pd.Timedelta(0)).fillna(pd.Timedelta(0))
 
     # Hora nova = hora de la primera petició de la sessió + suma de les pauses netes fins aquí
     start = sessions["timestamp"].transform("min")
     shifted = start + net.groupby(steps["session_id"]).cumsum()
 
-    result = df.copy()
     result.loc[steps.index, "timestamp"] = shifted
+    result.index = df.index
     return result
 
 
 def successful(df):
     """Les peticions que van anar bé (2xx), per aprendre'n els valors dels {id} de la ruta.
 
-    Així el pla no torna a fer servir un id que va donar 404. No es filtra:
+    Així els {id} que el pla tria per a una ruta amb plantilla no surten d'una petició que va fallar. Tot el que
+    no és 2xx compta com a fallada (també un 304 o un 400 per culpa del body: es perd algun id bo, mai no se'n
+    cola un de dolent). No toca els endpoints literals que el log ja porta sense plantilla. No es filtra:
     - si el log no té status (no se sap què va fallar);
     - una petició sense status a la línia (no se sap si va fallar);
     - una petició (mètode + endpoint) que no té cap 2xx: si no, sortiria del pla i JMeter faria servir 1.

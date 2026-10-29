@@ -7,7 +7,9 @@ import pandas as pd
 import pytest
 
 from ai import jmx_post
+from ai.bench import jmeter
 from ai.enhancements import traffic, traffic_curve, traffic_stats
+from ai.enhancements.base import Context
 from ai.tests.support import AI, INPUTS, ROOT, generate
 from log_parser.parser import parse_logs
 from traffic_model.payloads import build_path_params
@@ -43,36 +45,53 @@ def read(tmp_path, entries):
 
 # --- traffic_stats: pauses netes ------------------------------------------------------------------
 
-def test_net_pauses_subtract_the_previous_response_time(tmp_path):
+def pauses_of(df):
+    return df.groupby("session_id")["timestamp"].diff().dt.total_seconds().dropna().tolist()
+
+
+def test_net_pauses_subtract_the_response_time_of_the_request_that_closes_the_gap(tmp_path):
+    """L'app apunta l'hora en ACABAR la petició: el forat fins a una línia porta la duració d'aquella línia."""
     df = read(tmp_path, [line(0, "s1", duration=500), line(3, "s1", duration=200), line(4, "s1", duration=9)])
     net = traffic_stats.net_pauses(df)
-    pauses = net.groupby("session_id")["timestamp"].diff().dt.total_seconds().dropna().tolist()
-    assert pauses == [2.5, 0.8]                                  # 3 - 0,5 i 1 - 0,2
+    assert pauses_of(net) == pytest.approx([2.8, 0.991])          # 3 - 0,2 i 1 - 0,009 (els 500 ms de la primera no)
     assert net["timestamp"].iloc[0] == df["timestamp"].iloc[0]   # la sessió comença on començava
 
 
 def test_net_pauses_never_go_negative(tmp_path):
-    """Una petició que respon més lent del que tarda la següent a arribar: la pausa és 0, no negativa."""
-    df = read(tmp_path, [line(0, "s1", duration=5000), line(1, "s1"), line(2, "s1")])
-    net = traffic_stats.net_pauses(df)
-    pauses = net["timestamp"].diff().dt.total_seconds().dropna().tolist()
-    assert pauses == [0.0, 1.0]
+    """Una petició que triga més que el forat que tanca: la pausa és 0, no negativa."""
+    df = read(tmp_path, [line(0, "s1"), line(1, "s1", duration=5000), line(2, "s1")])
+    assert pauses_of(traffic_stats.net_pauses(df)) == [0.0, 1.0]
+
+
+def test_a_negative_duration_does_not_lengthen_a_pause(tmp_path):
+    df = read(tmp_path, [line(0, "s1"), line(5, "s1", duration=-3000), line(6, "s1", duration=100)])
+    assert pauses_of(traffic_stats.net_pauses(df)) == pytest.approx([5.0, 0.9])
 
 
 def test_net_pauses_reach_the_think_times_of_the_team(tmp_path):
-    df = read(tmp_path, [line(0, "s1", duration=1000), line(5, "s1", "/api/users/{id}", "/api/users/1")])
+    df = read(tmp_path, [line(0, "s1", duration=300), line(5, "s1", "/api/users/{id}", "/api/users/1", duration=1000)])
     original = build_think_times(df)["GET /api/accounts/{id}"]["GET /api/users/{id}"]
     net = build_think_times(traffic_stats.net_pauses(df))["GET /api/accounts/{id}"]["GET /api/users/{id}"]
     assert set(original) == {5000} and set(net) == {4000}
 
 
 def test_net_pauses_keep_sessions_apart_and_leave_the_input_alone(tmp_path):
-    df = read(tmp_path, [line(0, "a", duration=100), line(1, "b", duration=900), line(2, "a"), line(3, "b")])
+    df = read(tmp_path, [line(0, "a"), line(1, "b"), line(2, "a", duration=100), line(3, "b", duration=900)])
     before = df.copy()
     net = traffic_stats.net_pauses(df)
     gaps = {s: g["timestamp"].diff().dt.total_seconds().dropna().tolist() for s, g in net.groupby("session_id")}
     assert gaps == {"a": [1.9], "b": [1.1]}
     pd.testing.assert_frame_equal(df, before)
+
+
+def test_net_pauses_with_a_repeated_index(tmp_path):
+    """Dos logs enganxats amb pd.concat repeteixen l'índex: el resultat és el mateix i l'índex es conserva."""
+    first = read(tmp_path, [line(0, "a"), line(2, "a", duration=500)])
+    second = read(tmp_path, [line(10, "b"), line(14, "b", duration=1000)])
+    df = pd.concat([first, second])
+    net = traffic_stats.net_pauses(df)
+    assert list(net.index) == list(df.index)
+    assert pauses_of(net) == pytest.approx([1.5, 3.0])
 
 
 def test_without_durations_the_log_is_untouched(tmp_path):
@@ -97,6 +116,15 @@ def test_a_request_with_no_success_keeps_its_ids(tmp_path):
                          line(1, "s1", path="/api/accounts/1")])
     params = build_path_params(traffic_stats.successful(df))
     assert params["GET /api/users/{id}"]["id"] == [["7", 1.0]]
+
+
+def test_a_line_without_status_is_kept(tmp_path):
+    """No se sap si va fallar: no es llença."""
+    entries = [line(0, "s1", path="/api/accounts/1"), line(1, "s1", path="/api/accounts/5"),
+               line(2, "s1", path="/api/accounts/999", status=404)]
+    del entries[1]["status"]
+    clean = build_path_params(traffic_stats.successful(read(tmp_path, entries)))["GET /api/accounts/{id}"]["id"]
+    assert sorted(v for v, _ in clean) == ["1", "5"]
 
 
 def test_without_status_nothing_is_filtered(tmp_path):
@@ -139,7 +167,7 @@ def valley_peak_valley(tmp_path):
 
 def test_the_curve_follows_the_open_sessions(tmp_path):
     curve = traffic_curve.concurrency_curve(valley_peak_valley(tmp_path))
-    assert curve["slice_seconds"] == 600 and len(curve["values"]) == 18
+    assert curve["slice_seconds"] == pytest.approx(10799 / 18) and len(curve["values"]) == 18
     assert curve["values"][:6] == pytest.approx([1 / 3] * 6, abs=1e-3)
     assert curve["values"][6:12] == pytest.approx([1] * 6, abs=1e-3)
     assert curve["values"][12:] == pytest.approx([1 / 3] * 6, abs=1e-3)
@@ -151,6 +179,17 @@ def test_a_long_log_widens_the_slices(tmp_path):
     curve = traffic_curve.concurrency_curve(df)
     assert len(curve["values"]) == traffic_curve.MAX_SLICES
     assert curve["slice_seconds"] == pytest.approx(3 * 24 * 3600 / traffic_curve.MAX_SLICES)
+
+
+@pytest.mark.parametrize("span", [599, 601, 3601])
+def test_the_last_slice_is_not_a_leftover(tmp_path, span):
+    """Sessions obertes tot el log: la corba és plana, encara que el log no duri un múltiple de 10 minuts.
+    (Abans, amb 601 s, l'última franja valia 0,0017: la meitat de la prova sense cap fil; ho va trobar el
+    verificador el 2026-10-29.)"""
+    df = read(tmp_path, [line(t, s) for s in "abc" for t in (0, span)])
+    curve = traffic_curve.concurrency_curve(df)
+    assert curve["values"] == [1.0] * len(curve["values"])
+    assert curve["slice_seconds"] * len(curve["values"]) == pytest.approx(span)
 
 
 def test_single_request_sessions_still_count(tmp_path):
@@ -194,18 +233,112 @@ def test_a_plan_without_session_start_fails_hard(reference_plans):
         traffic_curve.add_timer(root, {"values": [1.0]})
 
 
+def test_without_the_curve_in_the_plan_the_side_file_goes(tmp_path, reference_plans):
+    """Si la corba no es pot posar, no queda un .ai.json que digui que s'encén amb -Jcurva_horaria=1."""
+    root = jmx_post.read(reference_plans["logs"]).getroot()
+    action = root.find(".//TestAction")
+    jmx_post.parent_of(root, action).remove(action)
+    enhancement = traffic.Enhancement(Context())
+    enhancement.curve = {"values": [1.0]}
+    enhancement.side_path = tmp_path / "plan.jmx.ai.json"
+    enhancement.side_path.write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError):
+        enhancement.edit_jmx(root)
+    assert not enhancement.side_path.exists()
+
+
+# --- traffic_curve: el temporitzador, amb el JMeter de debò ---------------------------------------
+
+SLICE = 6   # s de prova per franja
+ELAPSED = ("SampleResult.setSampleLabel(String.valueOf(System.currentTimeMillis() - "
+           "org.apache.jmeter.threads.JMeterContextService.getTestStartTime())); ")
+
+
+def timer_plan(path, values, threads):
+    """Pla mínim: ThreadGroup → «Nueva sesión» (amb el temporitzador) → un sampler d'1 s que no surt de la màquina.
+    (Basat en el pla del verificador del 2026-10-29.)"""
+    plan = ET.Element("jmeterTestPlan", version="1.2", properties="5.0", jmeter="5.6.3")
+    top = ET.SubElement(plan, "hashTree")
+    ET.SubElement(top, "TestPlan", guiclass="TestPlanGui", testclass="TestPlan", testname="corba")
+    plan_tree = ET.SubElement(top, "hashTree")
+    group = ET.SubElement(plan_tree, "ThreadGroup", guiclass="ThreadGroupGui", testclass="ThreadGroup", testname="G")
+    loop = ET.SubElement(group, "elementProp", name="ThreadGroup.main_controller", elementType="LoopController",
+                         guiclass="LoopControlPanel", testclass="LoopController")
+    ET.SubElement(loop, "boolProp", name="LoopController.continue_forever").text = "false"
+    ET.SubElement(loop, "intProp", name="LoopController.loops").text = "-1"
+    for name, value in [("on_sample_error", "continue"), ("num_threads", str(threads)), ("ramp_time", "0"),
+                        ("duration", str(SLICE * len(values))), ("delay", "0")]:
+        ET.SubElement(group, "stringProp", name=f"ThreadGroup.{name}").text = value
+    ET.SubElement(group, "boolProp", name="ThreadGroup.scheduler").text = "true"
+    group_tree = ET.SubElement(plan_tree, "hashTree")
+    action = ET.SubElement(group_tree, "TestAction", guiclass="TestActionGui", testclass="TestAction",
+                           testname="Nueva sesión")
+    ET.SubElement(action, "intProp", name="ActionProcessor.action").text = "1"
+    ET.SubElement(action, "intProp", name="ActionProcessor.target").text = "0"
+    ET.SubElement(action, "stringProp", name="ActionProcessor.duration").text = "0"
+    ET.SubElement(group_tree, "hashTree").extend(traffic_curve.timer({"values": values}))
+    sampler = ET.SubElement(group_tree, "JSR223Sampler", guiclass="TestBeanGUI", testclass="JSR223Sampler",
+                            testname="trabajo")
+    for name, value in [("scriptLanguage", "groovy"), ("parameters", ""), ("filename", ""), ("cacheKey", "true"),
+                        ("script", ELAPSED + "Thread.sleep(1000); SampleResult.setResponseCode('200'); return 'ok'")]:
+        sampler.append(jmx_post.string_prop(name, value))
+    ET.SubElement(group_tree, "hashTree")
+    ET.ElementTree(plan).write(path, encoding="UTF-8", xml_declaration=True)
+    return path
+
+
+def threads_per_slice(folder, properties, values, threads):
+    """{franja: fils que hi han treballat}, comptant només el mig de cada franja (marges d'1,5 s a cada costat).
+    L'hora de cada mostra és la del rellotge del temporitzador (getTestStartTime), que el sampler posa a l'etiqueta."""
+    plan = timer_plan(folder / "plan.jmx", values, threads)
+    code, output = jmeter.run(plan, folder / "r.jtl", folder / "j.log", properties)
+    assert code == 0, output
+    log = (folder / "j.log").read_text(encoding="utf-8")
+    assert " ERROR " not in log, log
+    samples = jmeter.read_jtl(folder / "r.jtl")
+    second = samples["label"].astype(int) / 1000
+    working = {j: set() for j in range(len(values))}
+    for at, name in zip(second, samples["threadName"]):
+        j, inside = divmod(at, SLICE)
+        if 1.5 <= inside <= SLICE - 1.5 and int(j) in working:
+            working[int(j)].add(int(name.rsplit("-", 1)[1]) - 1)      # «G 1-3» → fil 2
+    return working
+
+
+needs_jmeter = pytest.mark.skipif(not jmeter.jmeter_binary().exists(), reason="no hi ha JMeter local")
+CURVE = [1.0, 0.25, 0.0, 0.5]
+
+
+@needs_jmeter
+@pytest.mark.parametrize("value", [None, "0", "true"])
+def test_real_jmeter_curve_is_off_unless_asked(tmp_path, value):
+    """Sense -Jcurva_horaria=1 treballen tots els fils tota la prova (el pic constant del laboratori)."""
+    properties = {} if value is None else {traffic_curve.PROPERTY: value}
+    working = threads_per_slice(tmp_path, properties, CURVE, 4)
+    assert working == {j: {0, 1, 2, 3} for j in range(4)}
+
+
+@needs_jmeter
+def test_real_jmeter_follows_the_curve(tmp_path):
+    """Amb 4 fils i la corba [1, 0,25, 0, 0,5]: 4 fils, després només el 0, després cap, després el 0 i l'1."""
+    working = threads_per_slice(tmp_path, {traffic_curve.PROPERTY: "1"}, CURVE, 4)
+    assert working == {0: {0, 1, 2, 3}, 1: {0}, 2: set(), 3: {0, 1}}
+
+
 # --- traffic: la millora sencera, sobre les 5 entrades de la prova d'identitat ----------------------
 
 TIMER_TEXT = 'Long.parseLong(vars.get("stormThinkMs") ?: "0")'   # contracte amb el laboratori (factor_pausa)
 
 
-def model_of(root):
-    """El JSON del model que viatja dins dels scripts Groovy (jmx_generator/generator.py:_groovy)."""
+def models_of(root):
+    """Els JSON del model que viatgen dins dels scripts Groovy (jmx_generator/generator.py:_groovy), tots."""
+    models = []
     for prop in root.iter("stringProp"):
         if prop.get("name") == "script" and "parseText('''" in (prop.text or ""):
             embedded = prop.text.split("parseText('''", 1)[1].split("''')", 1)[0]
-            return json.loads(embedded.replace("\\'\\'\\'", "'''").replace("\\\\", "\\"))
-    raise AssertionError("el pla no porta el model")
+            models.append(json.loads(embedded.replace("\\'\\'\\'", "'''").replace("\\\\", "\\")))
+    assert models, "el pla no porta el model"
+    return models
 
 
 def without_model(root):
@@ -242,13 +375,15 @@ def test_load_is_the_same(name, traffic_plans, reference_plans):
 @pytest.mark.parametrize("name", INPUTS)
 def test_only_pauses_and_path_ids_change_in_the_model(name, traffic_plans, reference_plans):
     """El que fan les altres millores (Markov, bodies, correlació, sessió) no canvia amb --ai-traffic."""
-    ours = model_of(jmx_post.read(traffic_plans[name]).getroot())
-    theirs = model_of(jmx_post.read(reference_plans[name]).getroot())
-    changed = {key for key in theirs if ours.get(key) != theirs[key]} | (set(ours) - set(theirs))
-    assert changed <= {"think_time_ms", "path_params"}
-    for source, targets in theirs["think_time_ms"].items():     # pauses netes: mai més llargues
-        for target, pauses in targets.items():
-            assert all(a <= b for a, b in zip(ours["think_time_ms"][source][target], pauses))
+    all_ours = models_of(jmx_post.read(traffic_plans[name]).getroot())
+    all_theirs = models_of(jmx_post.read(reference_plans[name]).getroot())
+    assert len(all_ours) == len(all_theirs)
+    for ours, theirs in zip(all_ours, all_theirs):
+        changed = {key for key in theirs if ours.get(key) != theirs[key]} | (set(ours) - set(theirs))
+        assert changed <= {"think_time_ms", "path_params"}
+        for source, targets in theirs["think_time_ms"].items():     # pauses netes: mai més llargues
+            for target, pauses in targets.items():
+                assert all(a <= b for a, b in zip(ours["think_time_ms"][source][target], pauses))
 
 
 @pytest.mark.parametrize("name", INPUTS)
