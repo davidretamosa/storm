@@ -1,13 +1,14 @@
 """La millora del trànsit habitual (T-1, --ai-traffic). Logs sintètics fets aquí mateix: cap dada real."""
 import json
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 import pytest
 
 from ai import jmx_post
-from ai.enhancements import traffic_curve, traffic_stats
-from ai.tests.support import ROOT
+from ai.enhancements import traffic, traffic_curve, traffic_stats
+from ai.tests.support import AI, INPUTS, ROOT, generate
 from log_parser.parser import parse_logs
 from traffic_model.payloads import build_path_params
 from traffic_model.think_time import build_think_times
@@ -188,3 +189,85 @@ def test_a_plan_without_session_start_fails_hard(reference_plans):
     jmx_post.parent_of(root, action).remove(action)
     with pytest.raises(ValueError, match="TestAction"):
         traffic_curve.add_timer(root, {"values": [1.0]})
+
+
+# --- traffic: la millora sencera, sobre les 5 entrades de la prova d'identitat ----------------------
+
+TIMER_TEXT = 'Long.parseLong(vars.get("stormThinkMs") ?: "0")'   # contracte amb el laboratori (factor_pausa)
+
+
+def model_of(root):
+    """El JSON del model que viatja dins dels scripts Groovy (jmx_generator/generator.py:_groovy)."""
+    for prop in root.iter("stringProp"):
+        if prop.get("name") == "script" and "parseText('''" in (prop.text or ""):
+            embedded = prop.text.split("parseText('''", 1)[1].split("''')", 1)[0]
+            return json.loads(embedded.replace("\\'\\'\\'", "'''").replace("\\\\", "\\"))
+    raise AssertionError("el pla no porta el model")
+
+
+def without_model(root):
+    """El .jmx canònic, sense el temporitzador de la corba i amb el JSON del model tret de tots els scripts."""
+    for parent in root.iter():
+        for child in list(parent):
+            if child.get("testname") == traffic_curve.TIMER_NAME:
+                index = list(parent).index(child)
+                parent.remove(parent[index + 1])   # el seu <hashTree/>
+                parent.remove(child)
+    for prop in root.iter("stringProp"):
+        if prop.get("name") == "script" and "parseText('''" in (prop.text or ""):
+            head, rest = prop.text.split("parseText('''", 1)
+            prop.text = head + "parseText('''MODEL''')" + rest.split("''')", 1)[1]
+    return jmx_post.canonical(ET.tostring(root, encoding="unicode"))
+
+
+@pytest.fixture(scope="module")
+def traffic_plans(tmp_path_factory):
+    folder = tmp_path_factory.mktemp("traffic")
+    return {name: generate(AI, ["--ai-traffic", *args], folder / f"{name}.jmx") for name, args in INPUTS.items()}
+
+
+@pytest.mark.parametrize("name", INPUTS)
+def test_load_is_the_same(name, traffic_plans, reference_plans):
+    """vusers, rampa i durada idèntics: la corba no puja mai del pic, només adorm fils (i va apagada)."""
+    props = ("num_threads", "ramp_time", "duration", "scheduler", "delay")
+    def thread_group(plan):
+        group = jmx_post.read(plan).getroot().find(".//ThreadGroup")
+        return {p: group.find(f"*[@name='ThreadGroup.{p}']").text for p in props}
+    assert thread_group(traffic_plans[name]) == thread_group(reference_plans[name])
+
+
+@pytest.mark.parametrize("name", INPUTS)
+def test_only_pauses_and_path_ids_change_in_the_model(name, traffic_plans, reference_plans):
+    """El que fan les altres millores (Markov, bodies, correlació, sessió) no canvia amb --ai-traffic."""
+    ours = model_of(jmx_post.read(traffic_plans[name]).getroot())
+    theirs = model_of(jmx_post.read(reference_plans[name]).getroot())
+    changed = {key for key in theirs if ours.get(key) != theirs[key]} | (set(ours) - set(theirs))
+    assert changed <= {"think_time_ms", "path_params"}
+    for source, targets in theirs["think_time_ms"].items():     # pauses netes: mai més llargues
+        for target, pauses in targets.items():
+            assert all(a <= b for a, b in zip(ours["think_time_ms"][source][target], pauses))
+
+
+@pytest.mark.parametrize("name", INPUTS)
+def test_the_rest_of_the_plan_is_the_same(name, traffic_plans, reference_plans):
+    ours = jmx_post.read(traffic_plans[name]).getroot()
+    assert without_model(ours) == without_model(jmx_post.read(reference_plans[name]).getroot())
+    timers = [t for t in ours.iter("JSR223Timer") if t.get("testname") != traffic_curve.TIMER_NAME]
+    assert [t.find("stringProp[@name='script']").text for t in timers] == [TIMER_TEXT]
+
+
+@pytest.mark.parametrize("name", INPUTS)
+def test_the_curve_is_there_when_the_log_has_sessions(name, traffic_plans):
+    root = jmx_post.read(traffic_plans[name]).getroot()
+    curves = [t for t in root.iter("JSR223Timer") if t.get("testname") == traffic_curve.TIMER_NAME]
+    assert len(curves) == (0 if name == "jar" else 1)
+
+
+def test_the_side_file(traffic_plans):
+    data = json.loads(traffic.side_file(traffic_plans["bankapp+session"]).read_text(encoding="utf-8"))
+    assert data["curve_property"] == "-Jcurva_horaria=1"
+    assert max(data["curve"]["values"]) == 1.0
+    assert data["reference_durations"] and data["error_rates"]
+    assert all(set(v) == {"requests", "p50_ms", "p95_ms"} for v in data["reference_durations"].values())
+    jar_only = json.loads(traffic.side_file(traffic_plans["jar"]).read_text(encoding="utf-8"))
+    assert jar_only["curve"] is None and jar_only["reference_durations"] == {}

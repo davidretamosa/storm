@@ -88,7 +88,7 @@ def reference_durations(df):
     for key, group in known.groupby(request_keys(known)):
         result[key] = {
             "requests": int(len(group)),
-            "p50_ms": float(group["duration_ms"].quantile(0.5)),
-            "p95_ms": float(group["duration_ms"].quantile(0.95)),
+            "p50_ms": round(float(group["duration_ms"].quantile(0.5)), 3),
+            "p95_ms": round(float(group["duration_ms"].quantile(0.95)), 3),
         }
     return result
