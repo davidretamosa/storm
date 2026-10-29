@@ -8,12 +8,14 @@
 # 2-processing): el laboratorio le pasa host=bankapp. Si no envía métricas a InfluxDB, se le
 # añade el Backend Listener al ejecutarlo (ver ejecutar-y-evaluar.sh).
 set -e
+PLAN="${1:?Uso: ./cargar-plan.sh <fichero.jmx>}"
+[ -s "$PLAN" ] || { echo "No existe el fichero '$PLAN'"; exit 1; }
+# Ruta absoluta antes del cd, para poder llamar al script desde cualquier carpeta
+PLAN="$(cd "$(dirname "$PLAN")" && pwd)/$(basename "$PLAN")"
 cd "$(dirname "$0")"
 export MSYS_NO_PATHCONV=1
 NS=lab-jmeter
-PLAN="${1:?Uso: ./cargar-plan.sh <fichero.jmx>}"
 
-[ -s "$PLAN" ] || { echo "No existe el fichero '$PLAN'"; exit 1; }
 grep -q "<jmeterTestPlan" "$PLAN" || { echo "'$PLAN' no parece un plan de JMeter (.jmx)"; exit 1; }
 grep -q '__P(host' "$PLAN" || echo "Aviso: el plan no usa \${__P(host,...)}: apuntará a la app que tenga escrita dentro, no a la bankapp del laboratorio."
 

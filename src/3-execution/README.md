@@ -13,6 +13,10 @@ bankapp + logs  ──▶    el modelo de IA genera  ──▶  JMeter inyecta e
 Todo funciona en el Kubernetes local de Docker Desktop: la bankapp (compilada desde su rama de
 Git), JMeter y la monitorización.
 
+> **¿Queréis montarlo todo vosotros, de la bankapp al veredicto?** Seguid
+> [`PUESTA-EN-MARCHA.md`](PUESTA-EN-MARCHA.md): compilar la bankapp, sacar su `.jar` y sus logs,
+> generar el `.jmx` con el modelo de IA y lanzarlo en el laboratorio, paso a paso.
+
 ## Las carpetas
 
 | Carpeta | Qué es | Cuándo usarla |
