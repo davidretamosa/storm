@@ -1,5 +1,6 @@
-# Fitxers dels companys (src/2-processing) a 7fb9958 (feature/processing). Es regenera amb: python -m ai.upstream --write
+# Fitxers dels companys (src/2-processing) a d97bb47 (feature/processing). Es regenera amb: python -m ai.upstream --write
 # NOMÉS després de revalidar els embolcalls (ai/tests/test_ai_contract.py i test_ai_identity.py).
+8f54adf79a2462b0fc2bffc35a49f90dd76e1c801be2965b5842d3e4aa0bb440  ../1-input/java-app-mock/logs/bankapp.jsonl
 6b95470c206676771195b9f577854786d008b3d5fcb4f4077cf5e6c4f050dc54  .gitignore
 73b523215660c5a078292c276de68f05c57cfe0506315ba79e9fbd00d0db3814  DEMO.md
 3b5e04474176ff3ce18a334af6201bda2129150ab5ef7deb9bf790c915a1103e  GUIA.md
@@ -33,7 +34,6 @@ b0b1bfd1a42e633a693282bf1a39d809d2a47f9f5ae0f0ea77c47f7e15211b07  samples/demo_a
 2a93d70600d170647cbd1dbacdc55312cba8130ea50f3bb72f80ce0fa160c26f  samples/demo_app/src/com/pae/bankapp/dto/TransferRequest.java
 a0d584354a19d7cc22114f8d2558c748c592a8f1661710c8cabdcf951d552f57  samples/demo_app/src/com/pae/bankapp/dto/UserDTO.java
 bc2e9217a1a7c2ac1998ab55ed8ea7c483e1745e5c3af69d9a012cc1b4ed4dcb  samples/demo_app/src/com/pae/bankapp/dto/WithdrawRequest.java
-953a089c08e6e76bed97265201715bb2133c433d5444c02c055f14550c1e1d9e  samples/martina_bankapp.jsonl
 544f1649f9ee52c208e738899dc4a3af80bf99ba1968f3749fad9e445ff2457e  tests/conftest.py
 483237a04ba48a8111bc496884d1971975a2a2d4d5ed6f30465c8bebb083633c  tests/test_correlation.py
 4392d1ad4a4795b80c31ce9c19c765411305588e7531eb3bf0d46247bc199dc7  tests/test_jar_model.py

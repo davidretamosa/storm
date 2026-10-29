@@ -4,7 +4,7 @@ import sys
 import pytest
 
 import main
-from ai import jmx_post, upstream
+from ai import cli, jmx_post, upstream
 from ai import upstream as lock
 from ai.cli import build_parser, run
 from ai.hooks import WRAPPABLE, HookError, Installation
@@ -114,6 +114,24 @@ def test_double_install_is_refused():
         with pytest.raises(HookError, match="ja està embolcallada"):
             with Installation({}):
                 pass
+
+
+def test_active_enhancements_share_one_context(monkeypatch):
+    """Una millora pot deixar dades a ctx.shared i una altra les veu, sense editar base.py."""
+    seen = []
+
+    def spy(enhancement):
+        def build(ctx):
+            seen.append(ctx)
+            return enhancement(ctx)
+        return build
+
+    opts, _ = build_parser().parse_known_args(["--ai-traffic", "--ai-groups"])
+    monkeypatch.setattr(cli, "ENHANCEMENTS", {name: spy(cls) for name, cls in cli.ENHANCEMENTS.items()})
+    cli.plan_layers(opts)
+    assert len(seen) == 2 and seen[0] is seen[1]
+    seen[0].shared["traffic"] = "dades"
+    assert seen[1].shared == {"traffic": "dades"}
 
 
 def test_canary_wrapper_is_called(tmp_path):

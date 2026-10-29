@@ -4,8 +4,15 @@ import xml.etree.ElementTree as ET
 import pytest
 
 from ai import jmx_post
+from ai.enhancements import ENHANCEMENTS
+from ai.enhancements.base import Enhancement, Placeholder
 from ai.enhancements.canary import COMMENT
 from ai.tests.support import AI, INPUTS, generate, sha256
+
+
+def placeholder_flags(enhancements):
+    """Les opcions de les millores que encara són buides. Quan un taller omple la seva, en surt sola."""
+    return [cls.flag for cls in enhancements.values() if issubclass(cls, Placeholder)]
 
 
 @pytest.mark.parametrize("name", INPUTS)
@@ -20,11 +27,22 @@ def test_noop_wrappers_are_byte_identical(name, reference_plans, tmp_path):
     assert sha256(plan) == sha256(reference_plans[name])
 
 
-@pytest.mark.parametrize("flag", ["--ai-traffic", "--ai-groups", "--ai-bodies", "--ai-augment"])
+@pytest.mark.parametrize("flag", placeholder_flags(ENHANCEMENTS))
 def test_placeholders_only_reserialize(flag, reference_plans, tmp_path):
     """Les millores encara buides fan passar el .jmx pel post-procés: la forma pot canviar, el contingut no."""
     plan = generate(AI, [flag, *INPUTS["logs+jar+session"]], tmp_path / "placeholder.jmx")
     assert jmx_post.canonical(plan) == jmx_post.canonical(reference_plans["logs+jar+session"])
+
+
+def test_a_filled_enhancement_leaves_the_placeholder_list():
+    """Control positiu: una millora que ja no és Placeholder deixa de comprovar-se sense editar la llista."""
+    class Filled(Enhancement):
+        flag = "--ai-filled"
+
+    class Empty(Placeholder):
+        flag = "--ai-empty"
+
+    assert placeholder_flags({"filled": Filled, "empty": Empty}) == ["--ai-empty"]
 
 
 @pytest.mark.parametrize("name", INPUTS)

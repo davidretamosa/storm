@@ -3,6 +3,7 @@
 Si un d'aquests tests falla, el codi dels companys ha canviat: revalida els embolcalls i actualitza el lock.
 """
 import inspect
+import re
 import sys
 from pathlib import Path
 
@@ -41,7 +42,7 @@ CALL_ORDER = {
     "logs+jar": ["parse_logs", "parse_jar", "compare_with_logs", *TAIL],
     "logs+jar+session": ["parse_logs", "parse_jar", "compare_with_logs",
                          "build_session_config", "remove_session_requests", *TAIL],
-    "martina+session": ["parse_logs", "build_session_config", "remove_session_requests", *TAIL],
+    "bankapp+session": ["parse_logs", "build_session_config", "remove_session_requests", *TAIL],
 }
 
 
@@ -49,9 +50,14 @@ def test_every_wrapped_function_is_frozen():
     assert set(SIGNATURES) == set(WRAPPABLE)
 
 
+def normalized(signature):
+    """Python 3.15 escriu Optional[X] com a X | None: la signatura és la mateixa, el text no."""
+    return re.sub(r"Optional\[(\w+)\]", r"\1 | None", signature)
+
+
 @pytest.mark.parametrize("name", WRAPPABLE)
 def test_signature(name):
-    assert str(inspect.signature(getattr(main, name))) == SIGNATURES[name]
+    assert normalized(str(inspect.signature(getattr(main, name)))) == normalized(SIGNATURES[name])
 
 
 @pytest.mark.parametrize("name", INPUTS)
