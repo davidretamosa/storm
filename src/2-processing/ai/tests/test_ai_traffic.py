@@ -171,6 +171,9 @@ def test_the_timer_carries_the_curve_and_is_off_by_default():
     assert "double[] curve = [0.25, 1.0] as double[]" in script
     assert 'props.getProperty("curva_horaria", "0").trim() != "1"' in script
     assert script.index("curva_horaria") < script.index("curve =")   # apagada abans de fer res
+    # un fil que ja no ha de treballar s'atura: si esperés al final, JMeter el despertaria per fer una última
+    # sessió (tots alhora; vist al JMeter real el 2026-10-29)
+    assert script.rstrip().endswith("ctx.getThread().stop()\nreturn 0L")
     assert element.find("stringProp[@name='scriptLanguage']").text == "groovy"
 
 

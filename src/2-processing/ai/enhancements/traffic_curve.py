@@ -27,7 +27,8 @@ SCRIPT = """// STORM-IA (T-1) · curva horaria del log. Apagada salvo que se lan
 // Encendida: el log entero se comprime en la duración de la prueba (duration) y, en cada franja, solo
 // trabajan tantos hilos como sesiones abiertas tenía el log, en proporción a la franja más llena (que
 // tiene todos los hilos: el pico sigue siendo vusers). Un hilo al que no le toca espera hasta la primera
-// franja en la que le toca; una sesión ya empezada no se corta. Devuelve la espera en ms.
+// franja en la que le toca, o acaba si ya no le toca ninguna. Una sesión empezada no se corta.
+// Devuelve la espera en ms.
 import java.util.concurrent.ThreadLocalRandom
 import org.apache.jmeter.threads.JMeterContextService
 
@@ -53,7 +54,10 @@ for (int j = Math.max(0, (int) (elapsed / sliceMs)); j < curve.length; j++) {
         return Math.max(0L, (long) (j * sliceMs) - elapsed)
     }
 }
-return Math.max(0L, durationMs - elapsed)   // ya no le toca: espera al final de la prueba
+// Ya no le toca: el hilo acaba aquí. Esperar al final no sirve: JMeter recorta la espera al final de la
+// prueba y el hilo aún empezaría una última sesión (todos a la vez).
+ctx.getThread().stop()
+return 0L
 """
 
 
