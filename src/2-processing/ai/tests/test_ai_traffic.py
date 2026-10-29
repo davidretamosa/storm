@@ -5,7 +5,8 @@ from datetime import datetime, timedelta, timezone
 import pandas as pd
 import pytest
 
-from ai.enhancements import traffic_stats
+from ai import jmx_post
+from ai.enhancements import traffic_curve, traffic_stats
 from ai.tests.support import ROOT
 from log_parser.parser import parse_logs
 from traffic_model.payloads import build_path_params
@@ -119,3 +120,71 @@ def test_reference_durations(tmp_path):
     df = read(tmp_path, [line(i, "s1", duration=d) for i, d in enumerate(range(1, 21))])   # 1..20 ms
     durations = traffic_stats.reference_durations(df)["GET /api/accounts/{id}"]
     assert durations == {"requests": 20, "p50_ms": 10.5, "p95_ms": 19.05}
+
+
+# --- traffic_curve: la corba ---------------------------------------------------------------------
+
+def valley_peak_valley(tmp_path):
+    """3 hores: 1 sessió oberta a cada moment, després 3 alhora, després 1 (sessions de 10 min)."""
+    entries = []
+    for hour, parallel in enumerate([1, 3, 1]):
+        for k in range(6):                       # 6 franges de 10 min per hora
+            start = hour * 3600 + k * 600
+            for p in range(parallel):
+                session = f"h{hour}-{k}-{p}"
+                entries += [line(start, session), line(start + 599, session)]
+    return read(tmp_path, entries)
+
+
+def test_the_curve_follows_the_open_sessions(tmp_path):
+    curve = traffic_curve.concurrency_curve(valley_peak_valley(tmp_path))
+    assert curve["slice_seconds"] == 600 and len(curve["values"]) == 18
+    assert curve["values"][:6] == pytest.approx([1 / 3] * 6, abs=1e-3)
+    assert curve["values"][6:12] == pytest.approx([1] * 6, abs=1e-3)
+    assert curve["values"][12:] == pytest.approx([1 / 3] * 6, abs=1e-3)
+    assert curve["start"] == "2026-01-01T09:00:00+00:00"
+
+
+def test_a_long_log_widens_the_slices(tmp_path):
+    df = read(tmp_path, [line(0, "a"), line(3 * 24 * 3600, "a")])     # una sessió de 3 dies
+    curve = traffic_curve.concurrency_curve(df)
+    assert len(curve["values"]) == traffic_curve.MAX_SLICES
+    assert curve["slice_seconds"] == pytest.approx(3 * 24 * 3600 / traffic_curve.MAX_SLICES)
+
+
+def test_single_request_sessions_still_count(tmp_path):
+    df = read(tmp_path, [line(0, "a"), line(700, "b"), line(710, "c")])
+    assert traffic_curve.concurrency_curve(df)["values"] == [0.5, 1.0]
+
+
+def test_no_sessions_no_curve(tmp_path):
+    assert traffic_curve.concurrency_curve(None) is None
+    df = read(tmp_path, [line(0, "a")])
+    assert traffic_curve.concurrency_curve(df.assign(session_id=None)) is None
+
+
+def test_the_timer_carries_the_curve_and_is_off_by_default():
+    element, tree = traffic_curve.timer({"values": [0.25, 1.0]})
+    assert element.tag == "JSR223Timer" and tree.tag == "hashTree"
+    script = element.find("stringProp[@name='script']").text
+    assert "double[] curve = [0.25, 1.0] as double[]" in script
+    assert 'props.getProperty("curva_horaria", "0").trim() != "1"' in script
+    assert script.index("curva_horaria") < script.index("curve =")   # apagada abans de fer res
+    assert element.find("stringProp[@name='scriptLanguage']").text == "groovy"
+
+
+def test_the_timer_goes_into_the_session_start(reference_plans):
+    root = jmx_post.read(reference_plans["bankapp+session"]).getroot()
+    traffic_curve.add_timer(root, {"values": [1.0]})
+    action = root.find(".//TestAction")
+    children = list(jmx_post.child_tree(root, action))
+    assert [c.tag for c in children] == ["JSR223PreProcessor", "hashTree", "JSR223Timer", "hashTree"]
+    assert children[2].get("testname") == traffic_curve.TIMER_NAME
+
+
+def test_a_plan_without_session_start_fails_hard(reference_plans):
+    root = jmx_post.read(reference_plans["logs"]).getroot()
+    action = root.find(".//TestAction")
+    jmx_post.parent_of(root, action).remove(action)
+    with pytest.raises(ValueError, match="TestAction"):
+        traffic_curve.add_timer(root, {"values": [1.0]})
