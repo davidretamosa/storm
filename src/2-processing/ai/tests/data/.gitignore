@@ -1,0 +1,2 @@
+# El .gitignore de l'arrel ignora *.jar: el .jar de prova de bodies_jar.py sí es versiona
+!bodies_fixture.jar
