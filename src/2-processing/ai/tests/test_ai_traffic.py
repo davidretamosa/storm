@@ -1,5 +1,6 @@
 """La millora del trànsit habitual (T-1, --ai-traffic). Logs sintètics fets aquí mateix: cap dada real."""
 import json
+from collections import Counter
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 
@@ -127,6 +128,13 @@ def test_a_line_without_status_is_kept(tmp_path):
     assert sorted(v for v, _ in clean) == ["1", "5"]
 
 
+def test_a_304_is_a_failure(tmp_path):
+    """El filtre és estricte: el que no és 2xx no ensenya ids (un 304 tampoc)."""
+    df = read(tmp_path, [line(0, "s1", path="/api/accounts/1"), line(1, "s1", path="/api/accounts/3", status=304)])
+    clean = build_path_params(traffic_stats.successful(df))["GET /api/accounts/{id}"]["id"]
+    assert [v for v, _ in clean] == ["1"]
+
+
 def test_without_status_nothing_is_filtered(tmp_path):
     entries = [line(0, "s1"), line(1, "s1", path="/api/accounts/2")]
     for entry in entries:
@@ -201,6 +209,16 @@ def test_no_sessions_no_curve(tmp_path):
     assert traffic_curve.concurrency_curve(None) is None
     df = read(tmp_path, [line(0, "a")])
     assert traffic_curve.concurrency_curve(df.assign(session_id=None)) is None
+    assert traffic_curve.concurrency_curve(df.assign(session_id="")) is None
+
+
+def test_the_empty_session_is_not_a_session(tmp_path):
+    """bankapp.jsonl porta "" als login i logout: comptada, seria una sessió de tot el log que aixeca les valls.
+    (La va trobar el verificador el 2026-10-29.)"""
+    with_empty = valley_peak_valley(tmp_path)
+    loose = read(tmp_path, [line(0, ""), line(10799, "")])
+    curve = traffic_curve.concurrency_curve(pd.concat([with_empty, loose], ignore_index=True))
+    assert curve == traffic_curve.concurrency_curve(with_empty)
 
 
 def test_the_timer_carries_the_curve_and_is_off_by_default():
@@ -287,21 +305,27 @@ def timer_plan(path, values, threads):
     return path
 
 
-def threads_per_slice(folder, properties, values, threads):
-    """{franja: fils que hi han treballat}, comptant només el mig de cada franja (marges d'1,5 s a cada costat).
-    L'hora de cada mostra és la del rellotge del temporitzador (getTestStartTime), que el sampler posa a l'etiqueta."""
+def run_timer_plan(folder, properties, values, threads):
+    """Les mostres del pla mínim: (segon de prova segons el rellotge del temporitzador, fil), sense errors al log."""
     plan = timer_plan(folder / "plan.jmx", values, threads)
     code, output = jmeter.run(plan, folder / "r.jtl", folder / "j.log", properties)
     assert code == 0, output
     log = (folder / "j.log").read_text(encoding="utf-8")
     assert " ERROR " not in log, log
     samples = jmeter.read_jtl(folder / "r.jtl")
-    second = samples["label"].astype(int) / 1000
+    seconds = samples["label"].astype(int) / 1000
+    numbers = [int(name.rsplit("-", 1)[1]) - 1 for name in samples["threadName"]]   # «G 1-3» → fil 2
+    return list(zip(seconds, numbers))
+
+
+def threads_per_slice(folder, properties, values, threads):
+    """{franja: fils que hi han treballat}, comptant només el mig de cada franja (marges d'1,5 s a cada costat).
+    L'hora de cada mostra és la del rellotge del temporitzador (getTestStartTime), que el sampler posa a l'etiqueta."""
     working = {j: set() for j in range(len(values))}
-    for at, name in zip(second, samples["threadName"]):
+    for at, thread in run_timer_plan(folder, properties, values, threads):
         j, inside = divmod(at, SLICE)
         if 1.5 <= inside <= SLICE - 1.5 and int(j) in working:
-            working[int(j)].add(int(name.rsplit("-", 1)[1]) - 1)      # «G 1-3» → fil 2
+            working[int(j)].add(thread)
     return working
 
 
@@ -323,6 +347,17 @@ def test_real_jmeter_follows_the_curve(tmp_path):
     """Amb 4 fils i la corba [1, 0,25, 0, 0,5]: 4 fils, després només el 0, després cap, després el 0 i l'1."""
     working = threads_per_slice(tmp_path, {traffic_curve.PROPERTY: "1"}, CURVE, 4)
     assert working == {0: {0, 1, 2, 3}, 1: {0}, 2: set(), 3: {0, 1}}
+
+
+@needs_jmeter
+def test_real_jmeter_the_border_thread_works_with_the_decimal_part(tmp_path):
+    """0,4 × 4 fils = 1,6: el fil 0 sempre, el 2 i el 3 mai, i l'1 (la frontera) treballa una sessió amb
+    probabilitat 0,6; quan perd, dorm fins a la franja següent. Fa, doncs, moltes menys sessions que el 0
+    (~6 contra ~24). Si treballés sempre (Math.round, o sense sorteig) en faria tantes com el 0; si no
+    treballés mai, no hi seria."""
+    sessions = Counter(thread for _, thread in run_timer_plan(tmp_path, {traffic_curve.PROPERTY: "1"}, [0.4] * 4, 4))
+    assert set(sessions) == {0, 1}
+    assert sessions[1] < 0.75 * sessions[0], sessions
 
 
 # --- traffic: la millora sencera, sobre les 5 entrades de la prova d'identitat ----------------------

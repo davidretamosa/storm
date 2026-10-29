@@ -66,10 +66,14 @@ def concurrency_curve(df, slice_seconds=SLICE_SECONDS, max_slices=MAX_SLICES):
 
     values[j] = sessions obertes de mitjana a la franja j (ponderat pel temps) / la de la franja més plena.
     None si el log no té sessions: sense corba, el temporitzador no s'afegeix.
+    La pseudosessió "" (els login i logout de la bankapp, sense sessió) no compta: seria una sessió oberta
+    de la primera línia a l'última, que aixecaria totes les franges (logs sense sessió: IA-07).
     """
     if df is None or df.empty or "session_id" not in df.columns:
         return None
-    sessions = df.dropna(subset=["session_id"]).groupby("session_id")["timestamp"].agg(["min", "max"])
+    ids = df["session_id"].replace("", np.nan)
+    sessions = df.assign(session_id=ids).dropna(subset=["session_id"]).groupby("session_id")["timestamp"].agg(
+        ["min", "max"])
     if sessions.empty:
         return None
 
