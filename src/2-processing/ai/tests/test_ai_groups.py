@@ -212,3 +212,39 @@ def test_contract_templates_read_storm_model_from_the_thread():
     following = (templates / "next_request.groovy").read_text(encoding="utf-8")
     assert "pick(model.transitions[current]" in following
     assert "model.think_time_ms[current]" in following
+
+
+# --- El banc: recuperació, sessions senceres i el log d'un sol tipus ------------------------------------
+
+def test_recovery_profiles_by_signature():
+    from ai.bench.recovery import UNKNOWN, profile
+    assert profile(["POST /api/users"]) == "nuevo_cliente:alta"
+    assert profile(["POST /api/users"], whole=True) == "nuevo_cliente"
+    assert profile(["GET /api/accounts/{id}", "POST /api/transfers", "GET /api/accounts/{id}/transactions",
+                    "POST /api/accounts/{id}/withdraw"]) == "pagador"
+    assert profile(["GET /x"]) == UNKNOWN
+
+
+def test_session_js_is_zero_for_the_same_traffic_and_one_for_disjoint(tmp_path):
+    from ai.bench import metrics
+    from ai.bench.recovery import session_scores
+    a = metrics.requests(parse_logs(str(write_log(tmp_path / "a.jsonl", two_kinds()))))
+    b = metrics.requests(parse_logs(str(write_log(tmp_path / "b.jsonl", [visit(["GET /z"], 1)] * 20))))
+    assert session_scores(a, a) == {"session_js": 0.0, "session_length_wasserstein": 0.0, "session_length_ks": 0.0}
+    assert session_scores(a, b)["session_js"] == pytest.approx(1)
+
+
+def test_one_type_log_keeps_sessions_and_is_reproducible(tmp_path):
+    from ai.bench.one_type_log import one_type_log
+    log = write_log(tmp_path / "log.jsonl", two_kinds())
+    first, again = one_type_log(str(log), seed=0), one_type_log(str(log), seed=0)
+    assert first == again
+    assert {l["sessionId"] for l in first} == {f"s{n}" for n in range(60)}
+    timestamps = [l["timestamp"] for l in first]
+    assert timestamps == sorted(timestamps)
+    # Una sola cadena: surten seqüències que cap dels dos tipus no fa
+    sequences = {}
+    for line in first:
+        sequences.setdefault(line["sessionId"], []).append(f"{line['method']} {line['endpoint']}")
+    known = {("GET /a", "GET /b"), ("GET /a", "POST /c", "GET /b", "POST /d")}
+    assert {tuple(s) for s in sequences.values()} - known
