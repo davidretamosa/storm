@@ -13,6 +13,7 @@ De cada controller de Spring (@RestController) saca sus endpoints a partir de la
 
 Funciona con el .jar de Spring Boot (clases en BOOT-INF/classes/) y con un .jar normal.
 """
+import re
 import zipfile
 
 from jar_parser.class_file import read_class
@@ -30,6 +31,8 @@ MAPPINGS = {
     SPRING + "RequestMapping": None,
 }
 
+# ${propiedad:valor por defecto} -> valor por defecto (las interfaces generadas lo usan)
+PLACEHOLDER = re.compile(r"\$\{[^}:]*(?::([^}]*))?\}")
 
 def read_jar_classes(jar_path):
     """Lee todas las clases de la aplicación que hay dentro del .jar.
@@ -46,12 +49,43 @@ def read_jar_classes(jar_path):
             classes[info["name"]] = info
     return classes
 
+def resolve_placeholders(path):
+    """'${openapi.api.base-path:/api}/owners' -> '/api/owners' (usa el valor por defecto)."""
+    return PLACEHOLDER.sub(lambda match: match.group(1) or "", path)
 
 def paths_of(annotation):
     """Rutas de una anotación: @GetMapping("/{id}") -> ["/{id}"] ; @GetMapping -> [""]."""
     values = annotation["values"]
     paths = values.get("value") or values.get("path") or [""]
-    return paths
+    if isinstance(paths, str):
+        paths = [paths]
+    return [resolve_placeholders(path) for path in paths]
+
+def http_methods_of(annotation):
+    """Métodos HTTP de una anotación: @PostMapping -> ["POST"] ; @RequestMapping(method=GET) -> ["GET"]."""
+    method = MAPPINGS[annotation["type"]]
+    if method is not None:
+        return [method]
+    methods = annotation["values"].get("method") or ["GET"]
+    return methods if isinstance(methods, list) else [methods]
+
+
+def class_prefixes(info):
+    """Prefijos del @RequestMapping de una clase o interfaz; [] si no tiene."""
+    for annotation in info["annotations"]:
+        if annotation["type"] == SPRING + "RequestMapping":
+            return paths_of(annotation)
+    return []
+
+
+def all_interfaces(classes, info, seen=None):
+    """Interfaces de una clase (y las que extienden esas) que están dentro del .jar."""
+    seen = seen if seen is not None else []
+    for name in info.get("interfaces", []):
+        if name in classes and name not in seen:
+            seen.append(name)
+            all_interfaces(classes, classes[name], seen)
+    return seen
 
 
 def join_paths(prefix, path):
@@ -101,31 +135,34 @@ def parse_jar(jar_path):
         if not any(controller in class_types for controller in CONTROLLERS):
             continue
 
-        # 2. Prefijo de la clase: @RequestMapping("/api/accounts")
-        prefixes = [""]
-        for annotation in info["annotations"]:
-            if annotation["type"] == SPRING + "RequestMapping":
-                prefixes = paths_of(annotation)
+        # 2. Prefijo de la clase: @RequestMapping("/api/accounts"), si no tiene, el de la interfaz
+        own_prefixes = class_prefixes(info)
+        sources = [(info, own_prefixes)]
+        for interface_name in all_interfaces(classes, info):
+            interface = classes[interface_name]
+            sources.append((interface, own_prefixes or class_prefixes(interface)))
 
         # 3. Cada método con @GetMapping, @PostMapping... es un endpoint
-        for method in info["methods"]:
-            for annotation in method["annotations"]:
-                if annotation["type"] not in MAPPINGS:
-                    continue
-                http_methods = [MAPPINGS[annotation["type"]]]
-                if http_methods == [None]:  # @RequestMapping(method = RequestMethod.GET)
-                    http_methods = annotation["values"].get("method") or ["GET"]
-
-                for prefix in prefixes:
-                    for path in paths_of(annotation):
-                        for http_method in http_methods:
-                            endpoints.append({
-                                "method": http_method,
-                                "endpoint": join_paths(prefix, path),
-                                "controller": class_name,
-                                "handler": method["name"],
-                                "body": request_body(classes, method),
-                            })
+        found = set()
+        for source, prefixes in sources:
+            for method in source["methods"]:
+                for annotation in method["annotations"]:
+                    if annotation["type"] not in MAPPINGS:
+                        continue
+                    for prefix in prefixes or [""]:
+                        for path in paths_of(annotation):
+                            for http_method in http_methods_of(annotation):
+                                endpoint = join_paths(prefix, path)
+                                if (http_method, endpoint) in found:  # ya visto (p. ej. método repetido)
+                                    continue
+                                found.add((http_method, endpoint))
+                                endpoints.append({
+                                    "method": http_method,
+                                    "endpoint": endpoint,
+                                    "controller": class_name,
+                                    "handler": method["name"],
+                                    "body": request_body(classes, method),
+                                })
 
     endpoints.sort(key=lambda e: (e["endpoint"], e["method"]))
     return endpoints
