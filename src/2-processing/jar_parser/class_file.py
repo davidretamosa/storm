@@ -185,8 +185,9 @@ def read_class(data):
     this_class = pool[reader.u2()]
     name = pool[this_class[1]].replace("/", ".")
     reader.u2()  # superclase
-    for _ in range(reader.u2()):  # interfaces
-        reader.u2()
+    interfaces = []
+    for _ in range(reader.u2()):  # interfaces que implementa (o extiende, si es una interfaz)
+        interfaces.append(pool[pool[reader.u2()][1]].replace("/", "."))
 
     fields = []
     for _ in range(reader.u2()):
@@ -210,4 +211,4 @@ def read_class(data):
         })
 
     class_annotations = read_attributes(reader, pool)["annotations"]
-    return {"name": name, "annotations": class_annotations, "fields": fields, "methods": methods}
+    return {"name": name, "interfaces": interfaces, "annotations": class_annotations, "fields": fields, "methods": methods}
