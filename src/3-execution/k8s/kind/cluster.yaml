@@ -1,0 +1,32 @@
+# Clúster de Kubernetes de varios nodos con kind (Kubernetes IN Docker), para probar el
+# laboratorio como en un clúster real: cada nodo es un contenedor de Docker y Kubernetes
+# reparte los pods entre ellos (los workers de JMeter acaban en nodos distintos).
+#
+# Crear:   kind create cluster --config kind/cluster.yaml     (desde src/3-execution/k8s)
+# Usar:    kubectl config use-context kind-storm   (el de Docker Desktop: docker-desktop)
+# Borrar:  kind delete cluster --name storm
+#
+# 1 nodo de control (gestiona el clúster, no ejecuta pruebas) + 3 nodos de trabajo.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: storm
+nodes:
+  - role: control-plane
+    # Los NodePort del laboratorio se sacan al equipo con otros puertos, para no chocar
+    # con los del Kubernetes de Docker Desktop si están los dos encendidos.
+    extraPortMappings:
+      - containerPort: 30000   # Grafana     -> http://localhost:40000
+        hostPort: 40000
+        listenAddress: "127.0.0.1"
+      - containerPort: 30080   # app prueba  -> http://localhost:40080
+        hostPort: 40080
+        listenAddress: "127.0.0.1"
+      - containerPort: 30081   # bankapp     -> http://localhost:40081
+        hostPort: 40081
+        listenAddress: "127.0.0.1"
+      - containerPort: 30090   # Prometheus  -> http://localhost:40090
+        hostPort: 40090
+        listenAddress: "127.0.0.1"
+  - role: worker
+  - role: worker
+  - role: worker
