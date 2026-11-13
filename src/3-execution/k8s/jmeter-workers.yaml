@@ -23,6 +23,15 @@ spec:
       labels:
         app: jmeter-worker
     spec:
+      # En un clúster de varios nodos, cada worker en un nodo distinto si se puede (la carga sale
+      # de máquinas diferentes). Con un solo nodo (Docker Desktop) se colocan igualmente.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: jmeter-worker
       containers:
         - name: jmeter-worker
           image: lab-jmeter:latest      # la misma imagen que el master

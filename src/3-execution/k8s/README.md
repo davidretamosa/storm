@@ -57,6 +57,37 @@ las propiedades de la prueba se envían a los workers con `-G` (con `-J` solo la
 master), los puertos RMI son fijos (1099 y 50000 en los workers, 60000 en el master), RMI va
 sin SSL y cada pod se anuncia con su IP (`java.rmi.server.hostname`).
 
+## Varios nodos con kind
+
+El Kubernetes de Docker Desktop tiene un solo nodo. Para ver el laboratorio como en un clúster
+real (o en la nube), [kind](https://kind.sigs.k8s.io/) crea un clúster en el que cada nodo es un
+contenedor de Docker: `kind/cluster.yaml` define 1 nodo de control y 3 de trabajo. Los mismos
+ficheros sirven sin cambios; Kubernetes reparte los pods entre los nodos y pone cada worker de
+JMeter en un nodo distinto.
+
+```bash
+winget install Kubernetes.kind                 # una sola vez (abrir una terminal nueva después)
+kind create cluster --config kind/cluster.yaml # crea el clúster "storm" y lo deja activo
+./desplegar.sh                                 # detecta kind y copia las imágenes a los nodos
+./cargar-plan.sh <plan.jmx>
+./lanzar-prueba.sh normal storm --workers 3
+kubectl -n lab-jmeter get pods -o wide         # columna NODE: en qué nodo está cada pod
+```
+
+En kind los servicios salen por los puertos **400xx** (Grafana `localhost:40000`, bankapp
+`localhost:40081`, Prometheus `localhost:40090`) para no chocar con los 300xx de Docker Desktop.
+
+Para cambiar de clúster: `kubectl config use-context docker-desktop` o `kind-storm`. Todos los
+scripts usan el clúster activo. Para borrarlo: `kind delete cluster --name storm`.
+
+Ten en cuenta:
+- Los 4 nodos comparten la memoria y la CPU del mismo equipo, así que los tiempos son algo
+  peores que en Docker Desktop: sirve para demostrar el reparto, no para medir rendimiento.
+- Con los dos clústeres encendidos la memoria de Docker se queda justa: conviene parar uno
+  (en Docker Desktop, `kubectl -n lab-jmeter scale deploy --all --replicas=0`).
+- En kind cada nodo tiene su propio almacén de imágenes; por eso `desplegar.sh` hace
+  `kind load docker-image`. En un clúster en la nube se subirían a un registro.
+
 ## Escenarios
 
 Cada escenario es un fichero de `escenarios/` que solo fija la carga; el plan (`plan.jmx`) es
@@ -137,6 +168,7 @@ del escenario queda guardado en InfluxDB (etiqueta `application`).
 | `grafana.yaml` | Grafana con datasources y dashboard ya configurados |
 | `jmeter-job.yaml` | Una prueba = un Job que ejecuta `plan.jmx` y termina (con `--workers`, hace de master) |
 | `jmeter-workers.yaml` | Workers de JMeter para las pruebas distribuidas (Deployment a 0 réplicas + Service) |
+| `kind/cluster.yaml` | Clúster de 4 nodos con kind para probar el reparto entre máquinas |
 | `simulador-job.yaml` | Job con el simulador de clientes (`../simulador/simulador.py`) |
 | `backend-listener.xml` | Envío de métricas a InfluxDB que se añade a los planes que no lo traen |
 | `ejecutar-y-evaluar.sh` | Dentro del Job: lanza JMeter y comprueba los criterios de aprobado |
