@@ -29,3 +29,5 @@ venv/
 src/3-execution/lab-jmeter/resultados/
 # Resultados de las pruebas en Kubernetes (los copia lanzar-prueba.sh)
 src/3-execution/k8s/resultados/
+# Carpeta de trabajo de src/3-execution/PUESTA-EN-MARCHA.md (.jar, logs y plan generados)
+/entrada/

@@ -1,0 +1,75 @@
+# Workers de JMeter para las pruebas distribuidas.
+#
+# Un worker es un JMeter en modo servidor (jmeter-server): no hace nada hasta que el master
+# (el Job de jmeter-job.yaml) le envía el plan; entonces genera su parte de la carga contra
+# la app y le devuelve los resultados. Cada worker manda también sus métricas a InfluxDB,
+# así que Grafana muestra la carga de todos juntos.
+#
+# Kubernetes mantiene siempre el número de workers pedido (réplicas): si uno se cae, crea
+# otro. Por defecto hay 0 (no gastan nada); lanzar-prueba.sh los sube con --workers N:
+#   kubectl -n lab-jmeter scale deploy jmeter-worker --replicas=3
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jmeter-worker
+  namespace: lab-jmeter
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: jmeter-worker
+  template:
+    metadata:
+      labels:
+        app: jmeter-worker
+    spec:
+      containers:
+        - name: jmeter-worker
+          image: lab-jmeter:latest      # la misma imagen que el master
+          imagePullPolicy: Never
+          env:
+            # IP del pod: el worker la anuncia para que el master sepa dónde contestarle
+            # (con los 3 PCs era la IP de cada PC: -Djava.rmi.server.hostname)
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: HEAP
+              value: "-Xms512m -Xmx1g -XX:MaxMetaspaceSize=256m"
+          # Puertos fijos (los mismos que en la prueba con 3 PCs):
+          #   1099   donde el master encuentra al worker
+          #   50000  por donde el worker recibe el plan y las órdenes
+          # Sin SSL en RMI: dentro del clúster no hace falta y evita generar certificados.
+          command: ["sh", "-c", "exec jmeter-server -Djava.rmi.server.hostname=$POD_IP -Dserver_port=1099 -Jserver.rmi.localport=50000 -Jserver.rmi.ssl.disable=true"]
+          ports:
+            - containerPort: 1099
+            - containerPort: 50000
+          # Kubernetes solo da el worker por listo cuando ya escucha en el 1099
+          readinessProbe:
+            tcpSocket:
+              port: 1099
+            initialDelaySeconds: 5
+            periodSeconds: 3
+          resources:
+            requests:
+              cpu: 250m
+              memory: 768Mi
+            limits:
+              memory: 1536Mi
+---
+# Service "headless" (sin IP propia): no reparte tráfico, solo sirve para que el nombre
+# jmeter-worker devuelva las IPs de todos los workers vivos.
+apiVersion: v1
+kind: Service
+metadata:
+  name: jmeter-worker
+  namespace: lab-jmeter
+spec:
+  clusterIP: None
+  selector:
+    app: jmeter-worker
+  ports:
+    - name: rmi
+      port: 1099
+    - name: rmi-datos
+      port: 50000
