@@ -1,0 +1,60 @@
+# La aplicación objetivo: la app que STORM pone a prueba, sea cual sea.
+# No se aplica tal cual: desplegar-objetivo.sh rellena los huecos según la app que le den
+# (una imagen de cualquier lenguaje o un .jar):
+#   __IMAGEN__    imagen de la app             __POLITICA__  cuándo descargarla
+#   __PUERTO__    puerto en el que escucha     __SONDA__     cómo saber que está lista
+# Dentro del clúster se llama siempre "objetivo": el plan de JMeter recibe host=objetivo y
+# port=<su puerto>, así que el mismo laboratorio sirve para cualquier app.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: objetivo
+  namespace: lab-jmeter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: objetivo
+  template:
+    metadata:
+      labels:
+        app: objetivo
+    spec:
+      containers:
+        - name: objetivo
+          image: __IMAGEN__
+          imagePullPolicy: __POLITICA__
+          ports:
+            - containerPort: __PUERTO__
+          # Por defecto basta con que el puerto acepte conexiones (vale para cualquier app);
+          # con --salud se usa una ruta HTTP (p. ej. /actuator/health/readiness en Spring Boot).
+          # Margen amplio, como en app.yaml: con poco margen, bajo carga Kubernetes sacaba la
+          # app del Service por tardar en responder y provocaba errores que no eran suyos.
+          readinessProbe:
+            __SONDA__
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          # La bankapp llegó a ~1-1,4 GB en las pruebas pico y estrés: 2 GiB da margen a una app
+          # mediana. Para apps más grandes, cambiar el límite aquí.
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              memory: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: objetivo
+  namespace: lab-jmeter
+spec:
+  type: NodePort
+  selector:
+    app: objetivo
+  ports:
+    - port: __PUERTO__
+      targetPort: __PUERTO__
+      nodePort: 30081   # http://localhost:30081 (en kind: localhost:40081)

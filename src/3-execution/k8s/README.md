@@ -22,11 +22,37 @@ Desde esta carpeta (`src/3-execution/k8s`):
 ```bash
 ./desplegar.sh                 # construye las imágenes y levanta app, InfluxDB, Prometheus y Grafana
 ./lanzar-prueba.sh normal      # lanza una prueba con el escenario indicado (por defecto, humo)
-./cargar-plan.sh plan.jmx      # o carga un plan ya generado que te pasen (p. ej. de 2-processing)
-./lanzar-prueba.sh normal storm     # inyecta en la bankapp el plan cargado con cargar-plan.sh
+./desplegar-objetivo.sh --imagen <imagen> [--puerto N]   # la app a probar (o --jar <fichero.jar>)
+./cargar-plan.sh plan.jmx      # carga el plan de esa app (p. ej. el que genera 2-processing)
+./lanzar-prueba.sh normal storm     # inyecta en la app objetivo el plan cargado con cargar-plan.sh
 ./lanzar-prueba.sh normal storm --workers 3   # la misma prueba, repartida entre 3 workers
 ./quitar.sh                    # borra todo el laboratorio del clúster
 ```
+
+## La app objetivo: cualquier aplicación
+
+La app que se pone a prueba no está fijada: se despliega con `desplegar-objetivo.sh` a partir de
+lo que entregue quien la quiera probar, y dentro del clúster se llama siempre `objetivo`.
+
+| Opción | Qué es |
+|---|---|
+| `--imagen <imagen>` | Imagen de la app, de cualquier lenguaje: de un registro (`registro.empresa.com/app:1.0`) o construida en el equipo |
+| `--jar <fichero.jar>` | `.jar` ejecutable: se mete en una imagen de Java genérica (`../objetivo/Dockerfile`) |
+| `--puerto N` | Puerto en el que escucha (por defecto 8080) |
+| `--salud /ruta` | Ruta que responde 200 cuando la app está lista (opcional; sin ella basta con que el puerto acepte conexiones) |
+| `--java N` | Versión de Java para `--jar` (por defecto 21) |
+
+```bash
+# La bankapp, la app de ejemplo del proyecto (imagen publicada por GitHub Actions)
+./desplegar-objetivo.sh --imagen ghcr.io/davidretamosa/storm-bankapp --salud /actuator/health/readiness
+# Una app en Go en el puerto 80 (probado con traefik/whoami)
+./desplegar-objetivo.sh --imagen traefik/whoami:v1.10.3 --puerto 80
+```
+
+`lanzar-prueba.sh ... storm` le pasa al plan `host=objetivo` y el puerto de la app, así que el
+`.jmx` funciona sin cambios con tal de que use `${__P(host)}` y `${__P(port)}`. Volver a ejecutar
+`desplegar-objetivo.sh` sustituye la app. La app sale en `localhost:30081` (en kind,
+`localhost:40081`) y sus criterios de aprobado están en `criterios/objetivo.properties`.
 
 ## Pruebas distribuidas (`--workers N`)
 
@@ -36,7 +62,7 @@ Kubernetes:
 
 ```
                        ┌──▶ worker 1 ──┐
-Job jmeter (master) ───┼──▶ worker 2 ──┼──peticiones──▶ app / bankapp
+Job jmeter (master) ───┼──▶ worker 2 ──┼──peticiones──▶ app objetivo
   reparte y evalúa     └──▶ worker 3 ──┘
                             └──métricas──▶ InfluxDB ──▶ Grafana
 ```
@@ -74,7 +100,7 @@ kind create cluster --config kind/cluster.yaml # crea el clúster "storm" y lo d
 kubectl -n lab-jmeter get pods -o wide         # columna NODE: en qué nodo está cada pod
 ```
 
-En kind los servicios salen por los puertos **400xx** (Grafana `localhost:40000`, bankapp
+En kind los servicios salen por los puertos **400xx** (Grafana `localhost:40000`, app objetivo
 `localhost:40081`, Prometheus `localhost:40090`) para no chocar con los 300xx de Docker Desktop.
 
 Para cambiar de clúster: `kubectl config use-context docker-desktop` o `kind-storm`. Todos los
@@ -90,16 +116,16 @@ Ten en cuenta:
 
 ## Imágenes publicadas en GitHub (registro)
 
-Por defecto, las imágenes propias (bankapp, app de prueba y JMeter) se construyen en cada equipo.
-Un clúster en la nube no puede usarlas: necesita descargarlas de un **registro**. Para eso,
-GitHub Actions (`.github/workflows/imagenes.yml`) las construye y las publica en GitHub
-Container Registry cada vez que cambia su código en `develop`:
+Por defecto, las imágenes propias del laboratorio (app de prueba y JMeter) se construyen en cada
+equipo. Un clúster en la nube no puede usarlas: necesita descargarlas de un **registro**. Para
+eso, GitHub Actions (`.github/workflows/imagenes.yml`) las construye y las publica en GitHub
+Container Registry cada vez que cambia su código en `develop`, junto con la bankapp de ejemplo:
 
 | Imagen | Qué es |
 |---|---|
-| `ghcr.io/davidretamosa/storm-bankapp` | La bankapp (`src/1-input/java-app-mock`) |
-| `ghcr.io/davidretamosa/storm-lab-app` | La app de prueba |
+| `ghcr.io/davidretamosa/storm-lab-app` | La app de prueba del laboratorio |
 | `ghcr.io/davidretamosa/storm-lab-jmeter` | JMeter (master y workers) |
+| `ghcr.io/davidretamosa/storm-bankapp` | La bankapp, la app de ejemplo (`src/1-input/java-app-mock`) |
 
 Etiquetas: `latest` (lo último de `develop`), el nombre de la rama y el commit (`sha-xxxxxxx`).
 
@@ -108,15 +134,17 @@ Para desplegar con ellas, sin construir nada en el equipo:
 ```bash
 REGISTRO=ghcr.io/davidretamosa ./desplegar.sh
 REGISTRO=ghcr.io/davidretamosa ETIQUETA=sha-1a2b3c4 ./desplegar.sh   # una versión concreta
+./desplegar-objetivo.sh --imagen ghcr.io/davidretamosa/storm-bankapp --salud /actuator/health/readiness
 ```
 
 `desplegar.sh` cambia las imágenes de los `.yaml` por las del registro y Kubernetes las
 descarga; `lanzar-prueba.sh` usa para el master la misma imagen que los workers, así que no
-necesita la opción. Para volver a las locales, `./desplegar.sh` sin `REGISTRO`.
+necesita la opción. Para volver a las locales, `./desplegar.sh` sin `REGISTRO`. La app objetivo
+va aparte, con `desplegar-objetivo.sh --imagen`, venga del registro que venga.
 
-Las imágenes tienen que ser **públicas** para descargarlas sin contraseña: el dueño del repo lo
-cambia una vez por imagen en GitHub (*Packages → la imagen → Package settings → Change
-visibility*).
+Como el repositorio es público, las imágenes también lo son: se descargan sin contraseña.
+
+## Escenarios
 
 Cada escenario es un fichero de `escenarios/` que solo fija la carga; el plan (`plan.jmx`) es
 siempre el mismo.
@@ -141,9 +169,11 @@ crear uno nuevo basta con copiar un fichero, cambiar los números y volver a eje
 ## Criterios de aprobado
 
 Cada prueba termina con un veredicto, **SUPERADA** o **NO SUPERADA**, según los criterios del
-objetivo (`criterios/app.properties` y `criterios/bankapp.properties`):
+objetivo (`criterios/app.properties` para la app de prueba y `criterios/objetivo.properties`
+para la app objetivo). Los de la app objetivo son los de la bankapp; ajústalos a lo que se exija
+a la app que se prueba:
 
-| Criterio | app | bankapp |
+| Criterio | app de prueba | app objetivo |
 |---|---|---|
 | `MAX_ERRORES_PCT`: % máximo de **errores del servidor** de cada operación | 1 % | 0,1 % |
 | `MAX_P95_MS`: el 95 % de las peticiones debe responder en menos de | 1000 ms | 500 ms |
@@ -181,6 +211,7 @@ del escenario queda guardado en InfluxDB (etiqueta `application`).
 | Servicio   | URL                                        |
 |------------|--------------------------------------------|
 | App        | http://localhost:30080/hello               |
+| App objetivo | http://localhost:30081                   |
 | Grafana    | http://localhost:30000/d/lab-jmeter-k8s (admin / admin) |
 | Prometheus | http://localhost:30090                     |
 
@@ -190,17 +221,18 @@ del escenario queda guardado en InfluxDB (etiqueta `application`).
 |---|---|
 | `00-namespace.yaml` | Espacio `lab-jmeter`: todo el laboratorio vive aquí |
 | `almacenamiento.yaml` | Discos persistentes (InfluxDB, Prometheus, resultados) y el pod auxiliar `resultados` |
-| `app.yaml` | La app bajo prueba (Deployment + Service `app:8080`) |
+| `app.yaml` | La app de prueba del laboratorio (Deployment + Service `app:8080`) |
+| `objetivo.yaml` | Plantilla de la app objetivo; la rellena `desplegar-objetivo.sh` (imagen, puerto, salud) |
+| `desplegar-objetivo.sh` | Despliega como app objetivo cualquier app, a partir de su imagen o de su `.jar` |
 | `influxdb.yaml` | InfluxDB 1.8, base de datos `jmeter` |
 | `prometheus.yaml` | Prometheus y sus permisos para leer el cAdvisor del kubelet |
 | `grafana.yaml` | Grafana con datasources y dashboard ya configurados |
 | `jmeter-job.yaml` | Una prueba = un Job que ejecuta `plan.jmx` y termina (con `--workers`, hace de master) |
 | `jmeter-workers.yaml` | Workers de JMeter para las pruebas distribuidas (Deployment a 0 réplicas + Service) |
 | `kind/cluster.yaml` | Clúster de 4 nodos con kind para probar el reparto entre máquinas |
-| `simulador-job.yaml` | Job con el simulador de clientes (`../simulador/simulador.py`) |
 | `backend-listener.xml` | Envío de métricas a InfluxDB que se añade a los planes que no lo traen |
 | `ejecutar-y-evaluar.sh` | Dentro del Job: lanza JMeter y comprueba los criterios de aprobado |
-| `criterios/` | Criterios de aprobado de cada objetivo (`app` y `bankapp`, que usa el objetivo `storm`) |
+| `criterios/` | Criterios de aprobado de cada objetivo (`app` y `objetivo`, que usa el objetivo `storm`) |
 | `escenarios/` | Carga de cada escenario (humo, normal, pico, estres, rotura) |
 | `grafana/lab-jmeter-k8s.json` | Dashboard: el de `lab-jmeter` con CPU y memoria por pod |
 

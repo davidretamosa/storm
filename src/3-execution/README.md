@@ -6,12 +6,14 @@ y memoria, en Grafana y en un informe por prueba, con un veredicto de si la apli
 
 ```
 1-input                2-processing                3-execution (esta carpeta)
-bankapp + logs  ──▶    el modelo de IA genera  ──▶  JMeter inyecta el plan en la bankapp
+app + logs      ──▶    el modelo de IA genera  ──▶  JMeter inyecta el plan en la app objetivo
                        el plan .jmx                 └─▶ InfluxDB / Prometheus ──▶ Grafana + veredicto
 ```
 
-Todo funciona en el Kubernetes local de Docker Desktop: la bankapp (compilada desde su rama de
-Git), JMeter y la monitorización.
+Sirve para **cualquier aplicación**: la app que se prueba (la *app objetivo*) se despliega a
+partir de su imagen o de su `.jar` con `k8s/desplegar-objetivo.sh`. La bankapp de `1-input` es la
+app de ejemplo del proyecto. Todo funciona en Kubernetes: el de Docker Desktop, uno de varios
+nodos con kind o uno en la nube.
 
 > **¿Queréis montarlo todo vosotros, de la bankapp al veredicto?** Seguid
 > [`PUESTA-EN-MARCHA.md`](PUESTA-EN-MARCHA.md): compilar la bankapp, sacar su `.jar` y sus logs,
@@ -23,7 +25,8 @@ Git), JMeter y la monitorización.
 |---|---|---|
 | [`k8s/`](k8s/README.md) | **Laboratorio en Kubernetes** (el principal): escenarios, criterios de aprobado, resultados guardados por prueba, CPU y memoria por pod | Para las pruebas de verdad y la demo |
 | [`lab-jmeter/`](lab-jmeter/README.md) | Laboratorio con Docker Compose: la versión sencilla, con una app de prueba | Para entender el laboratorio o probar algo rápido. `k8s/` reutiliza sus piezas |
-| [`bankapp/`](bankapp/README.md) | Compila la bankapp de `1-input` para desplegarla en el laboratorio | Lo usa `k8s/` |
+| [`bankapp/`](bankapp/README.md) | Compila la bankapp de `1-input`, la app de ejemplo, para probarla en el laboratorio | Para probar el código de una rama de la bankapp |
+| `objetivo/` | `Dockerfile` genérico que mete un `.jar` en una imagen de Java | Lo usa `k8s/desplegar-objetivo.sh --jar` |
 | `docker/` | Vacía (estructura inicial del repositorio) | — |
 
 ## Inyectar un plan del grupo de IA
@@ -33,11 +36,14 @@ Git Bash:
 
 ```bash
 cd src/3-execution
-bankapp/construir-imagen.sh              # compila la bankapp (la primera vez o si cambia)
 k8s/desplegar.sh                         # levanta el laboratorio en Kubernetes
+k8s/desplegar-objetivo.sh --imagen <imagen> [--puerto N]   # la app a probar (o --jar <fichero.jar>)
 k8s/cargar-plan.sh plan.jmx              # carga el .jmx entregado por 2-processing
 k8s/lanzar-prueba.sh normal storm        # lo inyecta: 20 usuarios durante 3 minutos
 ```
+
+Con la bankapp de ejemplo, la app se despliega así:
+`k8s/desplegar-objetivo.sh --imagen ghcr.io/davidretamosa/storm-bankapp --salud /actuator/health/readiness`.
 
 Al terminar, la prueba muestra una tabla por operación y el veredicto (**SUPERADA** o
 **NO SUPERADA**), y guarda un informe HTML en `k8s/resultados/`. Las gráficas en directo
@@ -45,7 +51,7 @@ están en http://localhost:30000/d/lab-jmeter-k8s (admin / admin).
 
 El plan no necesita cambios para el laboratorio:
 - debe apuntar a la app con `${__P(host,...)}` y `${__P(port,...)}`, como los que genera
-  2-processing; el laboratorio le pasa `host=bankapp`;
+  2-processing; el laboratorio le pasa `host=objetivo` y el puerto de la app;
 - la carga se fija con las mismas propiedades que usa 2-processing (`vusers`, `rampup`,
   `duration`), que cambian según el escenario;
 - si no envía métricas a InfluxDB, el laboratorio le añade el envío al ejecutarlo

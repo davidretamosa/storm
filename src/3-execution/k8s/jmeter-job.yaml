@@ -4,7 +4,7 @@
 # El plan y los escenarios llegan desde ConfigMaps (los crea desplegar.sh):
 # jmeter-plan (app de prueba) o jmeter-plan-storm (plan de 2-processing), y jmeter-escenarios.
 # Para lanzarla: ./lanzar-prueba.sh <escenario> [app|storm]
-# (el script sustituye los marcadores __ESCENARIO__, __PLAN__, __HOST__ y los criterios).
+# (el script sustituye los marcadores __ESCENARIO__, __PLAN__, __HOST__, __PUERTO__ y los criterios).
 # Al terminar, ejecutar-y-evaluar.sh comprueba los criterios de aprobado (criterios/):
 # si no se cumplen, el Job termina en estado Failed. Los resultados quedan en el disco
 # jmeter-resultados, en /resultados/__ID__ (lanzar-prueba.sh los copia al equipo).
@@ -52,7 +52,7 @@ spec:
           # El .jtl se separa por tabuladores (no por comas): los mensajes de error pueden
           # llevar comas y descuadrarían las columnas al evaluarlo.
           args: ["-n", "-t", "/test/plan.jmx",
-                 "-q", "/escenarios/__ESCENARIO__.properties", "-Jescenario=__ESCENARIO__", "-Jhost=__HOST__",
+                 "-q", "/escenarios/__ESCENARIO__.properties", "-Jescenario=__ESCENARIO__", "-Jhost=__HOST__", "-Jport=__PUERTO__",
                  "-l", "/resultados/__ID__/resultados.jtl", "-j", "/resultados/__ID__/jmeter.log",
                  "-e", "-o", "/resultados/__ID__/informe", "-Jjmeter.reportgenerator.temp_dir=/tmp/informe",
                  "-Jjmeter.save.saveservice.default_delimiter=\t"]

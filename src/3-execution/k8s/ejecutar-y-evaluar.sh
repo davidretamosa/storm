@@ -48,8 +48,8 @@ NUM_WORKERS=0
 [ -n "$WORKERS" ] && NUM_WORKERS=$(echo "$WORKERS" | tr ',' '\n' | grep -c .)
 
 # Mismos argumentos, pero con la copia en lugar del plan original.
-# En modo distribuido, lo que va con -J o -q solo lo ve el master: el escenario y el host
-# se repiten con -G, que es lo que llega a los workers (la carga la generan ellos).
+# En modo distribuido, lo que va con -J o -q solo lo ve el master: el escenario, el host
+# y el puerto se repiten con -G, que es lo que llega a los workers (la carga la generan ellos).
 ANTERIOR=""
 for arg in "$@"; do
   shift
@@ -57,7 +57,7 @@ for arg in "$@"; do
   set -- "$@" "$arg"
   if [ "$NUM_WORKERS" -gt 0 ]; then
     case "$arg" in
-      -Jescenario=*|-Jhost=*) set -- "$@" "-G${arg#-J}" ;;
+      -Jescenario=*|-Jhost=*|-Jport=*) set -- "$@" "-G${arg#-J}" ;;
     esac
     [ "$ANTERIOR" = "-q" ] && { FICHERO_ESCENARIO="$arg"; set -- "$@" "-G$arg"; }
   fi
