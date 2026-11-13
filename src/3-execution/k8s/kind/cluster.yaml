@@ -21,7 +21,7 @@ nodes:
       - containerPort: 30080   # app prueba  -> http://localhost:40080
         hostPort: 40080
         listenAddress: "127.0.0.1"
-      - containerPort: 30081   # bankapp     -> http://localhost:40081
+      - containerPort: 30081   # app objetivo -> http://localhost:40081
         hostPort: 40081
         listenAddress: "127.0.0.1"
       - containerPort: 30090   # Prometheus  -> http://localhost:40090

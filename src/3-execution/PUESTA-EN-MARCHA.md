@@ -17,6 +17,9 @@ prueba de carga completa: compilar la bankapp, sacar su `.jar` y sus logs, gener
 Todo se ejecuta en local, en el Kubernetes de Docker Desktop. Tiempo aproximado la primera vez:
 20-30 minutos (casi todo son descargas). Las siguientes veces, 5 minutos.
 
+La guía usa la **bankapp**, la app de ejemplo del proyecto, pero el laboratorio sirve para
+cualquier aplicación: al final se explica [cómo probar otra app](#con-otra-aplicación).
+
 ---
 
 ## 0. Requisitos (una sola vez)
@@ -82,7 +85,7 @@ bankapp real. No hay que hacer nada.
 paso 5, podéis copiarlos así:
 
 ```bash
-MSYS_NO_PATHCONV=1 kubectl -n lab-jmeter exec deploy/bankapp -- cat /app/logs/bankapp.jsonl > entrada/bankapp.jsonl
+MSYS_NO_PATHCONV=1 kubectl -n lab-jmeter exec deploy/objetivo -- cat /app/logs/bankapp.jsonl > entrada/bankapp.jsonl
 ```
 
 Ojo: el fichero se vacía cada vez que se reinicia la bankapp, y también incluye las peticiones
@@ -90,19 +93,24 @@ de las pruebas de carga que hayáis lanzado.
 
 ## 5. Levantar el laboratorio (3-execution)
 
+Primero el laboratorio, y después la app que se va a probar (la **app objetivo**):
+
 ```bash
 src/3-execution/k8s/desplegar.sh
+src/3-execution/k8s/desplegar-objetivo.sh --imagen bankapp:latest --salud /actuator/health/readiness
 ```
 
-Levanta en Kubernetes la bankapp, InfluxDB, Prometheus y Grafana. La primera vez también
-construye la imagen de JMeter (1-2 minutos). Termina con:
+`desplegar.sh` levanta en Kubernetes JMeter, InfluxDB, Prometheus y Grafana; la primera vez
+también construye la imagen de JMeter (1-2 minutos). `desplegar-objetivo.sh` despliega la
+bankapp que compilasteis en el paso 2 (`--salud` es la ruta que dice cuándo está lista; sin
+ella basta con que su puerto responda). Termina con:
 
 ```
-Laboratorio listo:
-  Bankapp:    http://localhost:30081/api/accounts
-  Grafana:    http://localhost:30000/d/lab-jmeter-k8s  (admin / admin)
-  ...
+App objetivo lista: bankapp:latest, puerto 8080 (desde el equipo: http://localhost:30081)
 ```
+
+Si no queréis compilar la bankapp (pasos 2 y 3), podéis usar la imagen que publica GitHub:
+`--imagen ghcr.io/davidretamosa/storm-bankapp`.
 
 Antes de seguir, comprobad que todos los pods están `1/1 Running` (la bankapp tarda unos
 20 segundos en arrancar):
@@ -232,6 +240,36 @@ y 7; los pasos 1-4 y 6 solo se repiten si cambia el código de la bankapp o quer
 
 ---
 
+## Con otra aplicación
+
+El laboratorio no depende de la bankapp: la app que se prueba se indica al desplegarla y dentro
+del clúster se llama siempre `objetivo`. Lo único que necesita 3-execution es la app y el plan:
+
+```bash
+# La app viene en una imagen (de cualquier lenguaje), en un registro o construida en el equipo:
+src/3-execution/k8s/desplegar-objetivo.sh --imagen registro.empresa.com/su-app:1.0 --puerto 9000
+
+# O viene como .jar ejecutable (lo mismo que recibe 2-processing):
+src/3-execution/k8s/desplegar-objetivo.sh --jar entrada/su-app.jar --puerto 8080 [--java 17]
+
+# Y después, igual que con la bankapp:
+src/3-execution/k8s/cargar-plan.sh entrada/plan.jmx
+src/3-execution/k8s/lanzar-prueba.sh humo storm
+```
+
+- `--puerto`: donde escucha la app (por defecto 8080). El plan lo recibe como `${__P(port)}` y
+  el nombre de la app como `${__P(host)}`, así que no hay que tocar el `.jmx`.
+- `--salud /ruta`: opcional, una ruta que responda 200 cuando la app esté lista. Sin ella,
+  basta con que el puerto acepte conexiones.
+- Los criterios de aprobado están en `k8s/criterios/objetivo.properties` (por defecto, los de
+  la bankapp: 0,1 % de errores del servidor y p95 de 500 ms); ajustadlos a lo que se exija a
+  la app.
+
+El plan sí tiene que estar hecho para esa app: lo genera 2-processing a partir de su `.jar` y
+de sus logs, que deben tener el formato que 2-processing sabe leer.
+
+---
+
 ## Problemas frecuentes
 
 | Síntoma | Causa y solución |
@@ -240,7 +278,8 @@ y 7; los pasos 1-4 y 6 solo se repiten si cambia el código de la bankapp o quer
 | `.venv/Scripts/python.exe: No such file or directory` | El entorno se creó con el `python` de Git Bash. Borrad `src/2-processing/.venv` y repetid el paso 6 con `py -3`. |
 | `UnicodeEncodeError` al generar el plan | Falta `PYTHONIOENCODING=utf-8` delante del comando. |
 | La prueba da muchos errores 500 o "sin respuesta" justo al empezar | La bankapp aún no había arrancado. Comprobad que está `1/1` con `kubectl -n lab-jmeter get pods` y repetid. |
-| Al encender Docker, la bankapp ya tiene carga o Grafana muestra una prueba que no habéis lanzado | Una prueba que quedó a medias (por ejemplo, al apagar el PC) vuelve a arrancar sola. Paradla con `kubectl -n lab-jmeter delete job jmeter` y reiniciad la bankapp con `kubectl -n lab-jmeter rollout restart deploy/bankapp`. |
+| Al encender Docker, la bankapp ya tiene carga o Grafana muestra una prueba que no habéis lanzado | Una prueba que quedó a medias (por ejemplo, al apagar el PC) vuelve a arrancar sola. Paradla con `kubectl -n lab-jmeter delete job jmeter` y reiniciad la app con `kubectl -n lab-jmeter rollout restart deploy/objetivo`. |
+| `desplegar-objetivo.sh` dice que la app no ha llegado a estar lista | La imagen no se puede descargar, la app no arranca o escucha en otro puerto. El propio mensaje dice qué revisar (`describe pod` y `logs`). Si la app tarda en arrancar o no tiene ruta de salud, quitad `--salud`. |
 | Grafana sale vacío | Revisad el rango de tiempo (por defecto, últimos 15 minutos). |
 | Muchos "Rechazos 4xx" en retiradas y transferencias | Es normal con el modelo actual: el generador elige importes al azar y muchos superan el saldo. La app responde bien; no es un fallo. |
 

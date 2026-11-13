@@ -3,9 +3,11 @@
 # el de Docker Desktop (un nodo) o uno de kind con varios nodos (ver kind/cluster.yaml).
 # Uso, desde src/3-execution/k8s:  ./desplegar.sh
 # Se puede repetir: aplica solo los cambios (p. ej. un plan.jmx nuevo).
+# Monta el laboratorio (JMeter, InfluxDB, Prometheus, Grafana y la app de prueba), no la app
+# que se va a poner a prueba: esa se despliega aparte con ./desplegar-objetivo.sh.
 #
-# Imágenes propias (bankapp, lab-app, lab-jmeter):
-#   por defecto   se construyen en este equipo (la bankapp, con ../bankapp/construir-imagen.sh)
+# Imágenes propias del laboratorio (lab-app, lab-jmeter):
+#   por defecto   se construyen en este equipo
 #   REGISTRO=ghcr.io/davidretamosa ./desplegar.sh
 #                 no se construye nada: el clúster las descarga del registro, donde las publica
 #                 GitHub Actions (.github/workflows/imagenes.yml). Es lo que hace falta en un
@@ -21,8 +23,7 @@ ETIQUETA="${ETIQUETA:-latest}"
 # registro y deja que Kubernetes las descargue (imagePullPolicy Always: latest cambia de contenido)
 aplicar() {
   if [ -n "$REGISTRO" ]; then
-    sed -e "s|image: bankapp:latest|image: $REGISTRO/storm-bankapp:$ETIQUETA|" \
-        -e "s|image: lab-app:latest|image: $REGISTRO/storm-lab-app:$ETIQUETA|" \
+    sed -e "s|image: lab-app:latest|image: $REGISTRO/storm-lab-app:$ETIQUETA|" \
         -e "s|image: lab-jmeter:latest|image: $REGISTRO/storm-lab-jmeter:$ETIQUETA|" \
         -e "s|imagePullPolicy: Never|imagePullPolicy: Always|" "$1" | kubectl apply -f -
   else
@@ -81,16 +82,6 @@ kubectl apply -f influxdb.yaml -f prometheus.yaml -f grafana.yaml
 # arranca. El Job de cada prueba (master) usa la misma imagen que ellos.
 aplicar jmeter-workers.yaml
 DESPLIEGUES="resultados app influxdb prometheus grafana"
-# La bankapp se despliega si está en el registro o si ya se ha construido su imagen
-if [ -n "$REGISTRO" ] || docker image inspect bankapp:latest >/dev/null 2>&1; then
-  [ -n "$REGISTRO" ] || cargar_en_kind bankapp:latest
-  aplicar bankapp.yaml
-  # Reinicia el pod para que use la imagen recién construida o publicada (la etiqueta no cambia)
-  kubectl -n "$NS" rollout restart deploy/bankapp >/dev/null
-  DESPLIEGUES="$DESPLIEGUES bankapp"
-else
-  echo "   (bankapp no desplegada: construye antes su imagen con ../bankapp/construir-imagen.sh)"
-fi
 
 echo "4/4 Esperando a que todo esté listo..."
 for d in $DESPLIEGUES; do
@@ -99,8 +90,12 @@ done
 
 echo
 echo "Laboratorio listo:"
-echo "  App:        http://localhost:${PUERTO}0080/hello"
-echo "  Bankapp:    http://localhost:${PUERTO}0081/api/accounts  (si está desplegada)"
-echo "  Grafana:    http://localhost:${PUERTO}0000/d/lab-jmeter-k8s  (admin / admin)"
-echo "  Prometheus: http://localhost:${PUERTO}0090"
+echo "  App de prueba: http://localhost:${PUERTO}0080/hello"
+echo "  Grafana:       http://localhost:${PUERTO}0000/d/lab-jmeter-k8s  (admin / admin)"
+echo "  Prometheus:    http://localhost:${PUERTO}0090"
+if kubectl -n "$NS" get deploy objetivo >/dev/null 2>&1; then
+  echo "  App objetivo:  http://localhost:${PUERTO}0081  ($(kubectl -n "$NS" get deploy objetivo -o jsonpath='{.spec.template.spec.containers[0].image}'))"
+else
+  echo "Falta la app a probar: ./desplegar-objetivo.sh --imagen <imagen> | --jar <fichero.jar> [--puerto N]"
+fi
 echo "Lanzar una prueba: ./lanzar-prueba.sh <escenario> [app|storm] [--workers N]"

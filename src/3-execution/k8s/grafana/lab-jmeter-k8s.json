@@ -487,7 +487,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (componente) (label_replace(rate(container_cpu_usage_seconds_total{namespace=\"lab-jmeter\", pod=~\"(app|bankapp|jmeter)-.*\", container=\"\"}[30s]), \"componente\", \"$1\", \"pod\", \"([a-z]+)-.*\"))",
+          "expr": "sum by (componente) (label_replace(rate(container_cpu_usage_seconds_total{namespace=\"lab-jmeter\", pod=~\"(app|objetivo|jmeter)-.*\", container=\"\"}[30s]), \"componente\", \"$1\", \"pod\", \"([a-z]+)-.*\"))",
           "legendFormat": "{{componente}}",
           "instant": true,
           "range": false
@@ -522,7 +522,7 @@
         },
         "overrides": []
       },
-      "description": "Núcleos de CPU que usa ahora cada pod (app, bankapp y JMeter), sobre los 12 del nodo. Naranja a partir del 70 %, rojo a partir del 90 %.",
+      "description": "Núcleos de CPU que usa ahora cada pod (app de prueba, app objetivo y JMeter), sobre los 12 del nodo. Naranja a partir del 70 %, rojo a partir del 90 %.",
       "options": {
         "reduceOptions": {
           "calcs": [
@@ -560,7 +560,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (componente) (label_replace(container_memory_working_set_bytes{namespace=\"lab-jmeter\", pod=~\"(app|bankapp|jmeter)-.*\", container=\"\"}, \"componente\", \"$1\", \"pod\", \"([a-z]+)-.*\"))",
+          "expr": "sum by (componente) (label_replace(container_memory_working_set_bytes{namespace=\"lab-jmeter\", pod=~\"(app|objetivo|jmeter)-.*\", container=\"\"}, \"componente\", \"$1\", \"pod\", \"([a-z]+)-.*\"))",
           "legendFormat": "{{componente}}",
           "instant": true,
           "range": false
@@ -610,7 +610,7 @@
         "minVizWidth": 75,
         "minVizHeight": 75
       },
-      "description": "Memoria que usa ahora cada pod (app, bankapp y JMeter), sobre 2 GiB (el límite de la bankapp). Naranja a partir del 70 %, rojo a partir del 90 %."
+      "description": "Memoria que usa ahora cada pod (app de prueba, app objetivo y JMeter), sobre 2 GiB (el límite de la app objetivo). Naranja a partir del 70 %, rojo a partir del 90 %."
     }
   ],
   "templating": {

@@ -3,7 +3,8 @@
 # Uso, desde src/3-execution/k8s:  ./lanzar-prueba.sh [escenario] [app|storm] [--workers N]
 #   escenario: humo (por defecto), normal, pico o estres (escenarios/*.properties)
 #   objetivo:  app     app de prueba con su plan (por defecto)
-#              storm   bankapp con el plan entregado por 2-processing (./cargar-plan.sh)
+#              storm   la app objetivo (./desplegar-objetivo.sh) con el plan de 2-processing
+#                      (./cargar-plan.sh); JMeter recibe host=objetivo y el puerto de la app
 #   --workers N  prueba distribuida: Kubernetes arranca N workers de JMeter (jmeter-workers.yaml),
 #                la carga se reparte entre ellos y al terminar se vuelven a apagar.
 #                Sin la opción, un solo pod de JMeter genera toda la carga (como siempre).
@@ -38,18 +39,20 @@ fi
 
 # Plan (ConfigMap), app a la que apunta JMeter y criterios de aprobado de cada objetivo
 case "$OBJETIVO" in
-  app)     PLAN=jmeter-plan;         HOST=app;     CRITERIOS=app ;;
-  storm)   PLAN=jmeter-plan-storm;   HOST=bankapp; CRITERIOS=bankapp
+  app)     PLAN=jmeter-plan;         HOST=app;      CRITERIOS=app ;;
+  storm)   PLAN=jmeter-plan-storm;   HOST=objetivo; CRITERIOS=objetivo
            if ! kubectl -n "$NS" get configmap jmeter-plan-storm >/dev/null 2>&1; then
              echo "Aún no hay plan cargado: ejecuta ./cargar-plan.sh <fichero.jmx>"
              exit 1
            fi ;;
   *)       echo "Objetivo desconocido '$OBJETIVO': usa app o storm"; exit 1 ;;
 esac
-if [ "$HOST" = bankapp ] && ! kubectl -n "$NS" get deploy bankapp >/dev/null 2>&1; then
-  echo "La bankapp no está desplegada: ../bankapp/construir-imagen.sh y ./desplegar.sh"
+if [ "$HOST" = objetivo ] && ! kubectl -n "$NS" get deploy objetivo >/dev/null 2>&1; then
+  echo "No hay app objetivo desplegada: ./desplegar-objetivo.sh --imagen <imagen> | --jar <fichero.jar>"
   exit 1
 fi
+# Puerto en el que escucha la app (el de su Service); el plan lo recibe como ${__P(port)}
+PUERTO=$(kubectl -n "$NS" get svc "$HOST" -o jsonpath='{.spec.ports[0].port}')
 
 # Criterios de aprobado (MAX_ERRORES_PCT y MAX_P95_MS)
 . "criterios/$CRITERIOS.properties"
@@ -92,6 +95,7 @@ POLITICA=$(kubectl -n "$NS" get deploy jmeter-worker -o jsonpath='{.spec.templat
 # Un Job no se puede volver a ejecutar: se borra el anterior y se crea otro
 kubectl -n "$NS" delete job jmeter --ignore-not-found
 sed -e "s/__ESCENARIO__/$ESCENARIO/g" -e "s/__PLAN__/$PLAN/g" -e "s/__HOST__/$HOST/g" -e "s/__ID__/$ID/g" \
+    -e "s/__PUERTO__/$PUERTO/g" \
     -e "s/__WORKERS__/$WORKERS/g" \
     -e "s|image: lab-jmeter:latest|image: ${IMAGEN:-lab-jmeter:latest}|" \
     -e "s|imagePullPolicy: Never|imagePullPolicy: ${POLITICA:-Never}|" \
