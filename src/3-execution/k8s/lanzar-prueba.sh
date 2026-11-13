@@ -84,10 +84,17 @@ if [ "$NUM_WORKERS" -gt 0 ]; then
   echo "Workers listos: $WORKERS"
 fi
 
+# El master usa la misma imagen que los workers: la local (lab-jmeter) o la del registro si el
+# laboratorio se desplegó con REGISTRO=... ./desplegar.sh
+IMAGEN=$(kubectl -n "$NS" get deploy jmeter-worker -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)
+POLITICA=$(kubectl -n "$NS" get deploy jmeter-worker -o jsonpath='{.spec.template.spec.containers[0].imagePullPolicy}' 2>/dev/null || true)
+
 # Un Job no se puede volver a ejecutar: se borra el anterior y se crea otro
 kubectl -n "$NS" delete job jmeter --ignore-not-found
 sed -e "s/__ESCENARIO__/$ESCENARIO/g" -e "s/__PLAN__/$PLAN/g" -e "s/__HOST__/$HOST/g" -e "s/__ID__/$ID/g" \
     -e "s/__WORKERS__/$WORKERS/g" \
+    -e "s|image: lab-jmeter:latest|image: ${IMAGEN:-lab-jmeter:latest}|" \
+    -e "s|imagePullPolicy: Never|imagePullPolicy: ${POLITICA:-Never}|" \
     -e "s/__MAX_ERRORES_PCT__/$MAX_ERRORES_PCT/g" -e "s/__MAX_P95_MS__/$MAX_P95_MS/g" jmeter-job.yaml | kubectl apply -f -
 
 echo "Escenario '$ESCENARIO' contra $OBJETIVO en marcha:"

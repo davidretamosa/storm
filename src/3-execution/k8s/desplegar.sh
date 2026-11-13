@@ -3,10 +3,32 @@
 # el de Docker Desktop (un nodo) o uno de kind con varios nodos (ver kind/cluster.yaml).
 # Uso, desde src/3-execution/k8s:  ./desplegar.sh
 # Se puede repetir: aplica solo los cambios (p. ej. un plan.jmx nuevo).
+#
+# Imágenes propias (bankapp, lab-app, lab-jmeter):
+#   por defecto   se construyen en este equipo (la bankapp, con ../bankapp/construir-imagen.sh)
+#   REGISTRO=ghcr.io/davidretamosa ./desplegar.sh
+#                 no se construye nada: el clúster las descarga del registro, donde las publica
+#                 GitHub Actions (.github/workflows/imagenes.yml). Es lo que hace falta en un
+#                 clúster en la nube. ETIQUETA elige la versión (por defecto latest = develop).
 set -e
 cd "$(dirname "$0")"
 LAB=../lab-jmeter
 NS=lab-jmeter
+REGISTRO="${REGISTRO%/}"
+ETIQUETA="${ETIQUETA:-latest}"
+
+# kubectl apply de un fichero; con REGISTRO, cambia antes las imágenes locales por las del
+# registro y deja que Kubernetes las descargue (imagePullPolicy Always: latest cambia de contenido)
+aplicar() {
+  if [ -n "$REGISTRO" ]; then
+    sed -e "s|image: bankapp:latest|image: $REGISTRO/storm-bankapp:$ETIQUETA|" \
+        -e "s|image: lab-app:latest|image: $REGISTRO/storm-lab-app:$ETIQUETA|" \
+        -e "s|image: lab-jmeter:latest|image: $REGISTRO/storm-lab-jmeter:$ETIQUETA|" \
+        -e "s|imagePullPolicy: Never|imagePullPolicy: Always|" "$1" | kubectl apply -f -
+  else
+    kubectl apply -f "$1"
+  fi
+}
 
 # En kind cada nodo es un contenedor con su propio almacén de imágenes: las que se construyen
 # aquí hay que copiárselas (kind load). Docker Desktop, en cambio, usa directamente las de Docker.
@@ -23,15 +45,19 @@ cargar_en_kind() {  # cargar_en_kind <imagen>...: copia las imágenes a los nodo
   kind load docker-image "$@" --name "$KIND_CLUSTER" >/dev/null
 }
 
-echo "1/4 Construyendo las imágenes locales (lab-app y lab-jmeter)..."
-docker build -q -t lab-app "$LAB/app" >/dev/null
-# La imagen de JMeter no cambia y construirla implica descargar JMeter (~90 MB):
-# solo se construye si falta. Para forzarlo: docker rmi lab-jmeter
-if ! docker image inspect lab-jmeter:latest >/dev/null 2>&1; then
-  echo "   (descargando JMeter, solo la primera vez: unos minutos)"
-  docker build -q -t lab-jmeter "$LAB/jmeter" >/dev/null
+if [ -n "$REGISTRO" ]; then
+  echo "1/4 Imágenes del registro $REGISTRO (etiqueta $ETIQUETA): no se construye nada."
+else
+  echo "1/4 Construyendo las imágenes locales (lab-app y lab-jmeter)..."
+  docker build -q -t lab-app "$LAB/app" >/dev/null
+  # La imagen de JMeter no cambia y construirla implica descargar JMeter (~90 MB):
+  # solo se construye si falta. Para forzarlo: docker rmi lab-jmeter
+  if ! docker image inspect lab-jmeter:latest >/dev/null 2>&1; then
+    echo "   (descargando JMeter, solo la primera vez: unos minutos)"
+    docker build -q -t lab-jmeter "$LAB/jmeter" >/dev/null
+  fi
+  cargar_en_kind lab-app:latest lab-jmeter:latest
 fi
-cargar_en_kind lab-app:latest lab-jmeter:latest
 
 echo "2/4 Creando el namespace y los ConfigMaps (plan.jmx y Grafana)..."
 kubectl apply -f 00-namespace.yaml
@@ -49,15 +75,17 @@ configmap grafana-dashboards \
 
 echo "3/4 Desplegando discos, app, InfluxDB, Prometheus y Grafana..."
 kubectl apply -f almacenamiento.yaml
-kubectl apply -f app.yaml -f influxdb.yaml -f prometheus.yaml -f grafana.yaml
-# Workers de JMeter para pruebas distribuidas: se crean a 0 y lanzar-prueba.sh --workers N los arranca
-kubectl apply -f jmeter-workers.yaml
+aplicar app.yaml
+kubectl apply -f influxdb.yaml -f prometheus.yaml -f grafana.yaml
+# Workers de JMeter para pruebas distribuidas: se crean a 0 y lanzar-prueba.sh --workers N los
+# arranca. El Job de cada prueba (master) usa la misma imagen que ellos.
+aplicar jmeter-workers.yaml
 DESPLIEGUES="resultados app influxdb prometheus grafana"
-# La bankapp solo se despliega si ya se ha construido su imagen
-if docker image inspect bankapp:latest >/dev/null 2>&1; then
-  cargar_en_kind bankapp:latest
-  kubectl apply -f bankapp.yaml
-  # Reinicia el pod para que use la imagen recién construida (la etiqueta :latest no cambia)
+# La bankapp se despliega si está en el registro o si ya se ha construido su imagen
+if [ -n "$REGISTRO" ] || docker image inspect bankapp:latest >/dev/null 2>&1; then
+  [ -n "$REGISTRO" ] || cargar_en_kind bankapp:latest
+  aplicar bankapp.yaml
+  # Reinicia el pod para que use la imagen recién construida o publicada (la etiqueta no cambia)
   kubectl -n "$NS" rollout restart deploy/bankapp >/dev/null
   DESPLIEGUES="$DESPLIEGUES bankapp"
 else
