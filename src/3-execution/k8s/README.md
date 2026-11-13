@@ -88,7 +88,35 @@ Ten en cuenta:
 - En kind cada nodo tiene su propio almacén de imágenes; por eso `desplegar.sh` hace
   `kind load docker-image`. En un clúster en la nube se subirían a un registro.
 
-## Escenarios
+## Imágenes publicadas en GitHub (registro)
+
+Por defecto, las imágenes propias (bankapp, app de prueba y JMeter) se construyen en cada equipo.
+Un clúster en la nube no puede usarlas: necesita descargarlas de un **registro**. Para eso,
+GitHub Actions (`.github/workflows/imagenes.yml`) las construye y las publica en GitHub
+Container Registry cada vez que cambia su código en `develop`:
+
+| Imagen | Qué es |
+|---|---|
+| `ghcr.io/davidretamosa/storm-bankapp` | La bankapp (`src/1-input/java-app-mock`) |
+| `ghcr.io/davidretamosa/storm-lab-app` | La app de prueba |
+| `ghcr.io/davidretamosa/storm-lab-jmeter` | JMeter (master y workers) |
+
+Etiquetas: `latest` (lo último de `develop`), el nombre de la rama y el commit (`sha-xxxxxxx`).
+
+Para desplegar con ellas, sin construir nada en el equipo:
+
+```bash
+REGISTRO=ghcr.io/davidretamosa ./desplegar.sh
+REGISTRO=ghcr.io/davidretamosa ETIQUETA=sha-1a2b3c4 ./desplegar.sh   # una versión concreta
+```
+
+`desplegar.sh` cambia las imágenes de los `.yaml` por las del registro y Kubernetes las
+descarga; `lanzar-prueba.sh` usa para el master la misma imagen que los workers, así que no
+necesita la opción. Para volver a las locales, `./desplegar.sh` sin `REGISTRO`.
+
+Las imágenes tienen que ser **públicas** para descargarlas sin contraseña: el dueño del repo lo
+cambia una vez por imagen en GitHub (*Packages → la imagen → Package settings → Change
+visibility*).
 
 Cada escenario es un fichero de `escenarios/` que solo fija la carga; el plan (`plan.jmx`) es
 siempre el mismo.
