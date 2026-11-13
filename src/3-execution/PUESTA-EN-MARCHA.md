@@ -174,6 +174,17 @@ Para apretar de verdad a la app, usad `rotura`, que quita las pausas.
 El plan se carga una vez y se puede lanzar con todos los escenarios que queráis. Solo hay que
 volver a cargarlo (`cargar-plan.sh`) cuando generéis uno nuevo.
 
+**Repartir la carga entre varios JMeter.** Añadiendo `--workers N`, Kubernetes arranca N
+workers de JMeter, la prueba se reparte entre ellos y al terminar se apagan solos. Los usuarios
+del escenario son el total, así que el resultado es comparable con la prueba sin workers:
+
+```bash
+src/3-execution/k8s/lanzar-prueba.sh normal storm --workers 3
+```
+
+Es útil cuando un solo JMeter no da para generar toda la carga. El detalle está en
+[k8s/README.md](k8s/README.md#pruebas-distribuidas---workers-n).
+
 ## 8. Ver los resultados
 
 **En la terminal**, al terminar cada prueba, sale una tabla por operación y el veredicto:

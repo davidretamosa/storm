@@ -1,4 +1,6 @@
 # Una prueba de carga = un Job: arranca, ejecuta plan.jmx y termina.
+# Con --workers N este pod es el master: reparte la prueba entre los workers
+# (jmeter-workers.yaml), recoge sus resultados y los evalúa igual que en modo normal.
 # El plan y los escenarios llegan desde ConfigMaps (los crea desplegar.sh):
 # jmeter-plan (app de prueba) o jmeter-plan-storm (plan de 2-processing), y jmeter-escenarios.
 # Para lanzarla: ./lanzar-prueba.sh <escenario> [app|storm]
@@ -32,6 +34,15 @@ spec:
               value: "__MAX_P95_MS__"
             - name: RESULTADOS
               value: "/resultados/__ID__"
+            # Modo distribuido (lanzar-prueba.sh --workers N): IPs de los workers separadas
+            # por comas. Vacío = modo normal, este pod genera toda la carga él solo.
+            - name: WORKERS
+              value: "__WORKERS__"
+            # IP de este pod: en modo distribuido los workers le devuelven aquí los resultados
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
             # Memoria de JMeter (por defecto 1 GiB, igual que el límite del pod: con ~100 usuarios
             # sin pausas del plan de 2-processing se quedaba sin memoria). Deja 1 GiB fuera del heap.
             - name: HEAP

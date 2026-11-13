@@ -24,8 +24,38 @@ Desde esta carpeta (`src/3-execution/k8s`):
 ./lanzar-prueba.sh normal      # lanza una prueba con el escenario indicado (por defecto, humo)
 ./cargar-plan.sh plan.jmx      # o carga un plan ya generado que te pasen (p. ej. de 2-processing)
 ./lanzar-prueba.sh normal storm     # inyecta en la bankapp el plan cargado con cargar-plan.sh
+./lanzar-prueba.sh normal storm --workers 3   # la misma prueba, repartida entre 3 workers
 ./quitar.sh                    # borra todo el laboratorio del clúster
 ```
+
+## Pruebas distribuidas (`--workers N`)
+
+Sin la opción, un único pod de JMeter genera toda la carga. Con `--workers N` la prueba se
+reparte, igual que el modo distribuido de JMeter entre varios equipos, pero lo gestiona
+Kubernetes:
+
+```
+                       ┌──▶ worker 1 ──┐
+Job jmeter (master) ───┼──▶ worker 2 ──┼──peticiones──▶ app / bankapp
+  reparte y evalúa     └──▶ worker 3 ──┘
+                            └──métricas──▶ InfluxDB ──▶ Grafana
+```
+
+1. `lanzar-prueba.sh` pide N réplicas del Deployment `jmeter-worker` (`kubectl scale`) y espera
+   a que estén listas. Cada worker es un `jmeter-server` con la misma imagen que el master.
+2. Saca sus IPs del Service `jmeter-worker` y se las pasa al Job, que hace de master (`-R`).
+3. Los workers generan la carga y envían las métricas a InfluxDB; el master recoge los
+   resultados y los evalúa con los mismos criterios de siempre.
+4. Al terminar, los workers vuelven a 0 réplicas (no ocupan memoria entre pruebas).
+
+Los **usuarios del escenario son el total** y se reparten entre los workers redondeando hacia
+arriba (`normal`, 20 usuarios con 3 workers = 7 en cada uno), así que un escenario genera la
+misma carga con 1 o con N workers. Nunca se usan más workers que usuarios.
+
+Detalles que ya resuelven los ficheros (son los mismos que hacían falta con varios equipos):
+las propiedades de la prueba se envían a los workers con `-G` (con `-J` solo las vería el
+master), los puertos RMI son fijos (1099 y 50000 en los workers, 60000 en el master), RMI va
+sin SSL y cada pod se anuncia con su IP (`java.rmi.server.hostname`).
 
 ## Escenarios
 
@@ -74,7 +104,7 @@ La evaluación la hace `ejecutar-y-evaluar.sh` dentro del pod de JMeter.
 ## Resultados de cada prueba
 
 Cada prueba deja sus resultados en el equipo, en `resultados/<escenario>-<objetivo>-<fecha>/`
-(esta carpeta no se sube a git):
+(con `--workers N`: `<escenario>-<objetivo>-Nworkers-<fecha>/`; esta carpeta no se sube a git):
 
 | Fichero | Qué es |
 |---|---|
@@ -105,7 +135,8 @@ del escenario queda guardado en InfluxDB (etiqueta `application`).
 | `influxdb.yaml` | InfluxDB 1.8, base de datos `jmeter` |
 | `prometheus.yaml` | Prometheus y sus permisos para leer el cAdvisor del kubelet |
 | `grafana.yaml` | Grafana con datasources y dashboard ya configurados |
-| `jmeter-job.yaml` | Una prueba = un Job que ejecuta `plan.jmx` y termina |
+| `jmeter-job.yaml` | Una prueba = un Job que ejecuta `plan.jmx` y termina (con `--workers`, hace de master) |
+| `jmeter-workers.yaml` | Workers de JMeter para las pruebas distribuidas (Deployment a 0 réplicas + Service) |
 | `simulador-job.yaml` | Job con el simulador de clientes (`../simulador/simulador.py`) |
 | `backend-listener.xml` | Envío de métricas a InfluxDB que se añade a los planes que no lo traen |
 | `ejecutar-y-evaluar.sh` | Dentro del Job: lanza JMeter y comprueba los criterios de aprobado |

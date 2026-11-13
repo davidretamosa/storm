@@ -33,6 +33,8 @@ configmap grafana-dashboards \
 echo "3/4 Desplegando discos, app, InfluxDB, Prometheus y Grafana..."
 kubectl apply -f almacenamiento.yaml
 kubectl apply -f app.yaml -f influxdb.yaml -f prometheus.yaml -f grafana.yaml
+# Workers de JMeter para pruebas distribuidas: se crean a 0 y lanzar-prueba.sh --workers N los arranca
+kubectl apply -f jmeter-workers.yaml
 DESPLIEGUES="resultados app influxdb prometheus grafana"
 # La bankapp solo se despliega si ya se ha construido su imagen
 if docker image inspect bankapp:latest >/dev/null 2>&1; then
@@ -55,4 +57,4 @@ echo "  App:        http://localhost:30080/hello"
 echo "  Bankapp:    http://localhost:30081/api/accounts  (si está desplegada)"
 echo "  Grafana:    http://localhost:30000/d/lab-jmeter-k8s  (admin / admin)"
 echo "  Prometheus: http://localhost:30090"
-echo "Lanzar una prueba: ./lanzar-prueba.sh <escenario> [app|storm]"
+echo "Lanzar una prueba: ./lanzar-prueba.sh <escenario> [app|storm] [--workers N]"

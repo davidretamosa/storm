@@ -43,12 +43,38 @@ if grep -q 'Long.parseLong(vars.get("stormThinkMs") ?: "0")' "$COPIA"; then
   sed -i 's|Long.parseLong(vars.get("stormThinkMs") ?: "0")|Math.round(Long.parseLong(vars.get("stormThinkMs") ?: "0") * Double.parseDouble(props.getProperty("factor_pausa", "1")))|' "$COPIA"
 fi
 
-# Mismos argumentos, pero con la copia en lugar del plan original
+# Modo distribuido: WORKERS trae las IPs de los workers separadas por comas (vacío = normal)
+NUM_WORKERS=0
+[ -n "$WORKERS" ] && NUM_WORKERS=$(echo "$WORKERS" | tr ',' '\n' | grep -c .)
+
+# Mismos argumentos, pero con la copia en lugar del plan original.
+# En modo distribuido, lo que va con -J o -q solo lo ve el master: el escenario y el host
+# se repiten con -G, que es lo que llega a los workers (la carga la generan ellos).
+ANTERIOR=""
 for arg in "$@"; do
   shift
   [ "$arg" = "$PLAN" ] && arg="$COPIA"
   set -- "$@" "$arg"
+  if [ "$NUM_WORKERS" -gt 0 ]; then
+    case "$arg" in
+      -Jescenario=*|-Jhost=*) set -- "$@" "-G${arg#-J}" ;;
+    esac
+    [ "$ANTERIOR" = "-q" ] && { FICHERO_ESCENARIO="$arg"; set -- "$@" "-G$arg"; }
+  fi
+  ANTERIOR="$arg"
 done
+
+if [ "$NUM_WORKERS" -gt 0 ]; then
+  # Cada worker ejecuta el escenario entero: los usuarios del escenario son el total y se
+  # reparten (redondeando hacia arriba) para que la carga sea la misma con 1 o con N workers.
+  TOTAL=$(sed -n 's/^vusers=//p' "$FICHERO_ESCENARIO" | tr -d '\r ')
+  POR_WORKER=$(( (TOTAL + NUM_WORKERS - 1) / NUM_WORKERS ))
+  echo "Modo distribuido: $NUM_WORKERS workers ($WORKERS); $TOTAL usuarios en total, $POR_WORKER en cada uno."
+  # -R: a quién mandar la prueba. El resto, igual que con los 3 PCs: la IP del master para
+  # que los workers le devuelvan los resultados, puerto de vuelta fijo y RMI sin SSL.
+  set -- "$@" -R "$WORKERS" "-Gvusers=$POR_WORKER" \
+    "-Djava.rmi.server.hostname=$POD_IP" -Jclient.rmi.localport=60000 -Jserver.rmi.ssl.disable=true
+fi
 
 jmeter "$@" || { echo "JMeter ha terminado con error: no se puede evaluar la prueba."; exit 2; }
 [ -s "$JTL" ] || { echo "La prueba no ha generado resultados."; exit 2; }
