@@ -265,6 +265,10 @@ src/3-execution/k8s/lanzar-prueba.sh humo storm
   la bankapp: 0,1 % de errores del servidor y p95 de 500 ms); ajustadlos a lo que se exija a
   la app.
 
+En un clúster en la nube, una app entregada como `.jar` necesita además `--publicar
+ghcr.io/<usuario>` (antes, `docker login ghcr.io`): la nube no ve las imágenes de vuestro equipo y
+tiene que descargarla de un registro. Detalles en [k8s/README.md](k8s/README.md).
+
 El plan sí tiene que estar hecho para esa app: lo genera 2-processing a partir de su `.jar` y
 de sus logs, que deben tener el formato que 2-processing sabe leer.
 

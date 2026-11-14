@@ -41,12 +41,39 @@ lo que entregue quien la quiera probar, y dentro del clúster se llama siempre `
 | `--puerto N` | Puerto en el que escucha (por defecto 8080) |
 | `--salud /ruta` | Ruta que responde 200 cuando la app está lista (opcional; sin ella basta con que el puerto acepte conexiones) |
 | `--java N` | Versión de Java para `--jar` (por defecto 21) |
+| `--publicar <registro>` | Sube a un registro la imagen construida en el equipo antes de desplegarla; necesario en la nube (ver abajo) |
 
 ```bash
 # La bankapp, la app de ejemplo del proyecto (imagen publicada por GitHub Actions)
 ./desplegar-objetivo.sh --imagen ghcr.io/davidretamosa/storm-bankapp --salud /actuator/health/readiness
 # Una app en Go en el puerto 80 (probado con traefik/whoami)
 ./desplegar-objetivo.sh --imagen traefik/whoami:v1.10.3 --puerto 80
+```
+
+### App objetivo en un clúster en la nube (`--publicar`)
+
+Docker Desktop y kind ven las imágenes construidas en el equipo; un clúster en la nube no. Si la
+app llega como `.jar` (o como imagen construida en el equipo), hay que subir su imagen a un
+registro para que el clúster la descargue:
+
+```bash
+docker login ghcr.io          # una vez: usuario de GitHub y token personal con write:packages
+./desplegar-objetivo.sh --jar app-cliente.jar --puerto 8080 --publicar ghcr.io/<usuario>
+```
+
+El script construye la imagen, la sube como `ghcr.io/<usuario>/storm-objetivo:<fecha-hora>` y
+despliega esa. Si el clúster no es Docker Desktop ni kind y la imagen solo está en el equipo, el
+script se para y pide `--publicar` (si no, el clúster se quedaría esperando una imagen que no
+puede descargar). Una app que ya viene en un registro (`--imagen registro.cliente.com/app:1.0`)
+no necesita `--publicar`.
+
+Las imágenes nuevas de ghcr.io son **privadas**. O se hacen públicas en GitHub (*Packages → la
+imagen → Package settings → Change visibility*), o se le dan al clúster las credenciales en el
+Secret `registro-objetivo`, que `desplegar-objetivo.sh` usa solo si existe:
+
+```bash
+kubectl -n lab-jmeter create secret docker-registry registro-objetivo \
+  --docker-server=ghcr.io --docker-username=<usuario> --docker-password=<token con read:packages>
 ```
 
 `lanzar-prueba.sh ... storm` le pasa al plan `host=objetivo` y el puerto de la app, así que el
