@@ -85,6 +85,19 @@ if (deletedIds == null) {
         }
     }
 }
+// Registro compartido de recursos disponibles durante la prueba
+def availableIds = props.get("stormAvailableIds")
+
+if (availableIds == null) {
+    synchronized (props) {
+        availableIds = props.get("stormAvailableIds")
+
+        if (availableIds == null) {
+            availableIds = new java.util.concurrent.ConcurrentHashMap()
+            props.put("stormAvailableIds", availableIds)
+        }
+    }
+}
 
 // Prepara la petición: índice, parámetros de ruta y cuerpo
 def goTo = { String state ->
@@ -118,31 +131,46 @@ def goTo = { String state ->
             !removed.contains(String.valueOf(it[0]))
         }
 
-        // Priorizar el identificador creado durante la sesión
+        // Identificadores disponibles creados durante la prueba
+        def available = resource ? (availableIds[resource] ?: []) : []
+
+        def dynamicCandidates = available.findAll {
+            !removed.contains(String.valueOf(it))
+        }.toList()
+
         def createdId = resource ? ids[resource] : null
         def value = null
 
+        // 1. Priorizar el identificador de la sesión
         if (createdId != null &&
             !removed.contains(String.valueOf(createdId))) {
 
             value = createdId
 
+        // 2. Utilizar identificadores aprendidos
         } else if (candidates) {
 
             def total = candidates.sum { it[1] }
+
             def normalized = candidates.collect {
                 [it[0], it[1] / total]
             }
 
             value = pickValue(normalized)
 
-        } else if (!param.value && !removed.contains("1")) {
+        // 3. Utilizar recursos disponibles creados durante la prueba
+        } else if (dynamicCandidates) {
 
-            value = 1
+            def index = ThreadLocalRandom.current()
+                .nextInt(dynamicCandidates.size())
+
+            value = dynamicCandidates[index]
         }
 
+        // 4. No hay identificadores disponibles
         if (value == null) {
-            // No hay identificadores disponibles
+            log.warn("STORM: Petición omitida sin identificador: " + state)
+
             vars.put("stormSkipRequest", "true")
             vars.put("stormState", "END")
             return
@@ -150,7 +178,6 @@ def goTo = { String state ->
             vars.put(param.key, String.valueOf(value))
         }
     }
-
     // Seleccionar los parámetros de consulta según su distribución
     def queries = model.query_params?.get(state) ?: []
     def query = queries ? pickValue(queries) : ""
@@ -183,16 +210,29 @@ def goTo = { String state ->
 // Registra el identificador de un recurso creado
 def rememberCreatedId = { String state, def result ->
     def resource = correlation.creates?.get(state)
+
     if (!resource || !result.isSuccessful()) {
         return
     }
 
     try {
-        def response = new JsonSlurper().parseText(result.getResponseDataAsString())
+        def response = new JsonSlurper().parseText(
+            result.getResponseDataAsString()
+        )
+
         if (response instanceof Map && response.id != null) {
             def ids = vars.getObject("stormIds") ?: [:]
             ids[resource] = response.id
             vars.putObject("stormIds", ids)
+
+            // Registrar el recurso como disponible
+            def id = String.valueOf(response.id)
+
+            deletedIds[resource]?.remove(id)
+
+            availableIds.computeIfAbsent(resource) {
+                java.util.concurrent.ConcurrentHashMap.newKeySet()
+            }.add(id)
         }
     } catch (Exception ignored) {
         // Respuesta vacía o que no es JSON
@@ -215,6 +255,10 @@ def rememberDeletedId = { String state, def result ->
     def id = vars.get(deletion.param)
 
     if (id != null) {
+        // Retirar el recurso del registro de disponibles
+        availableIds[resource]?.remove(id)
+
+        // Registrar el recurso como eliminado
         deletedIds.computeIfAbsent(resource) {
             java.util.concurrent.ConcurrentHashMap.newKeySet()
         }.add(id)

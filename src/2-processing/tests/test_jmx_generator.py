@@ -65,7 +65,6 @@ def test_markov_scripts_embed_model(tmp_path):
 
     assert set(scripts) == {
         "JSR223PreProcessor",
-        "JSR223Timer",
         "JSR223PostProcessor"
     }
 

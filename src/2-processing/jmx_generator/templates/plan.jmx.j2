@@ -105,14 +105,6 @@
           <stringProp name="WhileController.condition">${__groovy(vars.get("stormState") != "END" &amp;&amp; vars.get("stormSkipRequest") != "true")}</stringProp>
         </WhileController>
         <hashTree>
-          <JSR223Timer guiclass="TestBeanGUI" testclass="JSR223Timer" testname="Pausa observada (think time)">
-            <stringProp name="scriptLanguage">groovy</stringProp>
-            <stringProp name="parameters"></stringProp>
-            <stringProp name="filename"></stringProp>
-            <stringProp name="cacheKey">true</stringProp>
-            <stringProp name="script">Long.parseLong(vars.get("stormThinkMs") ?: "0")</stringProp>
-          </JSR223Timer>
-          <hashTree/>
           <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Elegir siguiente petición (Markov)">
             <stringProp name="scriptLanguage">groovy</stringProp>
             <stringProp name="parameters"></stringProp>
