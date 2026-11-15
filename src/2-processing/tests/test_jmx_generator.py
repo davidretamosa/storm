@@ -80,3 +80,54 @@ def test_path_params_declared_and_target_configurable(tmp_path):
     defaults = root.find(".//ConfigTestElement")
     assert prop(defaults, "HTTPSampler.domain") == "${__P(host,bankapp)}"
     assert prop(defaults, "HTTPSampler.port") == "${__P(port,9090)}"
+
+def test_deleted_resources_in_model(tmp_path):
+    correlation = {
+        "creates": {},
+        "path_resources": {},
+        "body_resources": {},
+        "deletes": {
+            "DELETE /api/accounts/{id}": {
+                "resource": "/api/accounts",
+                "param": "id",
+            }
+        },
+    }
+
+    root = render(tmp_path, correlation=correlation)
+
+    script = prop(root.find(".//JSR223PostProcessor"), "script")
+
+    embedded = re.search(
+        r"parseText\('''(.*?)'''\)", script, re.S
+    ).group(1)
+
+    assert json.loads(embedded)["correlation"] == correlation
+
+
+def test_deleted_ids_management(tmp_path):
+    root = render(tmp_path)
+
+    script = prop(root.find(".//JSR223PostProcessor"), "script")
+
+    # Registro compartido de identificadores eliminados
+    assert "stormDeletedIds" in script
+    assert "ConcurrentHashMap" in script
+
+    # Registro de eliminaciones después de cada petición
+    assert "rememberDeletedId(current, prev)" in script
+
+
+def test_skip_request_without_available_ids(tmp_path):
+    root = render(tmp_path)
+
+    condition = prop(
+        root.find(".//WhileController"),
+        "WhileController.condition"
+    )
+
+    script = prop(root.find(".//JSR223PostProcessor"), "script")
+
+    # Control de peticiones sin identificadores disponibles
+    assert "stormSkipRequest" in condition
+    assert 'vars.put("stormSkipRequest", "true")' in script

@@ -102,7 +102,7 @@
         </hashTree>
         {% endif %}
         <WhileController guiclass="WhileControllerGui" testclass="WhileController" testname="Mientras la sesión siga">
-          <stringProp name="WhileController.condition">${__groovy(vars.get("stormState") != "END")}</stringProp>
+          <stringProp name="WhileController.condition">${__groovy(vars.get("stormState") != "END" &amp;&amp; vars.get("stormSkipRequest") != "true")}</stringProp>
         </WhileController>
         <hashTree>
           <JSR223Timer guiclass="TestBeanGUI" testclass="JSR223Timer" testname="Pausa observada (think time)">

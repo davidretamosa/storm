@@ -31,6 +31,24 @@ def resource_of_param(endpoint, param):
     before = endpoint.split("{" + param + "}")[0]
     return before.rstrip("/")
 
+def deleted_resource(state):
+    """Identifica el recurso y el parámetro de una operación DELETE."""
+    method, endpoint = state.split(" ", 1)
+
+    if method != "DELETE":
+        return None
+
+    match = re.search(r"/\{([^{}]+)\}$", endpoint)
+
+    if not match:
+        return None
+
+    param = match.group(1)
+
+    return {
+        "resource": resource_of_param(endpoint, param),
+        "param": param
+    }
 
 def resource_of_field(field, resources):
     """El recurso al que pertenece un campo id del body, por su nombre.
@@ -85,4 +103,17 @@ def build_correlation(model, bodies):
                 used.add(resource)
                 body_resources.setdefault(state, {})[name] = resource
 
-    return {"creates": creates, "path_resources": path_resources, "body_resources": body_resources}
+    # 4. Las peticiones que eliminan recursos
+    deletes = {}
+
+    for state in model["states"]:
+        resource = deleted_resource(state)
+        if resource:
+            deletes[state] = resource
+
+    return {
+        "creates": creates,
+        "path_resources": path_resources,
+        "body_resources": body_resources,
+        "deletes": deletes
+    }
