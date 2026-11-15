@@ -1,0 +1,78 @@
+# Construye las imágenes del laboratorio de 3-execution y las publica en GitHub Container
+# Registry (ghcr.io), para que cualquier clúster (kind, la nube...) las pueda descargar sin
+# construirlas en un PC. Usa el token interno de GitHub: no hace falta ninguna credencial.
+#
+#   ghcr.io/<dueño del repo>/storm-bankapp      la bankapp (src/1-input/java-app-mock)
+#   ghcr.io/<dueño del repo>/storm-lab-app      la app de prueba (src/3-execution/lab-jmeter/app)
+#   ghcr.io/<dueño del repo>/storm-lab-jmeter   JMeter, para el master y los workers
+#
+# Etiquetas: "latest" = lo último de develop; además, el nombre de la rama y el commit (sha-xxxxxxx).
+# Se ejecuta al cambiar el código de alguna imagen en develop, o a mano desde la pestaña Actions.
+# Para desplegar con ellas: REGISTRO=ghcr.io/<dueño> ./desplegar.sh   (ver src/3-execution/k8s/README.md)
+name: Imágenes del laboratorio
+
+on:
+  push:
+    branches: [develop, feature/3-execution-imagenes]
+    paths:
+      - src/1-input/java-app-mock/**
+      - src/3-execution/bankapp/Dockerfile
+      - src/3-execution/lab-jmeter/app/**
+      - src/3-execution/lab-jmeter/jmeter/**
+      - .github/workflows/imagenes.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write   # publicar en ghcr.io con el token interno (GITHUB_TOKEN)
+
+jobs:
+  imagen:
+    name: ${{ matrix.nombre }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - nombre: storm-bankapp
+            contexto: src/1-input/java-app-mock
+            dockerfile: src/3-execution/bankapp/Dockerfile
+          - nombre: storm-lab-app
+            contexto: src/3-execution/lab-jmeter/app
+            dockerfile: src/3-execution/lab-jmeter/app/Dockerfile
+          - nombre: storm-lab-jmeter
+            contexto: src/3-execution/lab-jmeter/jmeter
+            dockerfile: src/3-execution/lab-jmeter/jmeter/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+
+      # BuildKit: hace falta para la caché de Maven del Dockerfile de la bankapp
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Nombre (en minúsculas, como exige ghcr.io) y etiquetas de la imagen
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.nombre }}
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/develop' }}
+            type=ref,event=branch
+            type=sha
+          labels: |
+            org.opencontainers.image.title=${{ matrix.nombre }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.contexto }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.nombre }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.nombre }}
