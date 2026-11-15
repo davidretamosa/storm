@@ -138,6 +138,12 @@ evaluar() {
 
 # La evaluación se guarda junto a los resultados y se muestra en el log del pod
 evaluar > "$VEREDICTO"
+# Prueba parada a mano, con el botón rojo o por una alerta: quien la para deja abortada.txt.
+# Se evalúa lo que dio tiempo a medir, pero no cuenta como superada porque no se completó.
+if [ -f "$RESULTADOS/abortada.txt" ]; then
+  PARADA=$(cat "$RESULTADOS/abortada.txt")
+  sed -i "s/^VEREDICTO: .*/VEREDICTO: PRUEBA ABORTADA (parada $PARADA)/" "$VEREDICTO"
+fi
 echo
 cat "$VEREDICTO"
 grep -q "VEREDICTO: PRUEBA SUPERADA" "$VEREDICTO"
