@@ -151,6 +151,11 @@ def goTo = { String state ->
         }
     }
 
+    // Seleccionar los parámetros de consulta según su distribución
+    def queries = model.query_params?.get(state) ?: []
+    def query = queries ? pickValue(queries) : ""
+
+    vars.put("stormQuery", query ? "?" + query : "")
     def bodyModel = model.bodies[state]
     if (bodyModel) {
         def body = buildBody(bodyModel)

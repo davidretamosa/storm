@@ -45,9 +45,9 @@ def test_one_sampler_per_state_in_switch_order(tmp_path):
     samplers = list(root.iter("HTTPSamplerProxy"))
     # El índice del Switch es la posición en model["states"]
     assert [(s.get("testname"), prop(s, "HTTPSampler.method"), prop(s, "HTTPSampler.path")) for s in samplers] == [
-        ("GET /api/accounts/{id}", "GET", "/api/accounts/${id}"),
-        ("GET /api/users/{id}", "GET", "/api/users/${id}"),
-        ("POST /api/accounts/{id}/deposit", "POST", "/api/accounts/${id}/deposit"),
+        ("GET /api/accounts/{id}", "GET", "/api/accounts/${id}${stormQuery}"),
+        ("GET /api/users/{id}", "GET", "/api/users/${id}${stormQuery}"),
+        ("POST /api/accounts/{id}/deposit", "POST", "/api/accounts/${id}/deposit${stormQuery}"),
     ]
     assert prop(root.find(".//SwitchController"), "SwitchController.value") == "${stormIndex}"
 
@@ -56,13 +56,36 @@ def test_markov_scripts_embed_model(tmp_path):
     root = render(tmp_path)
     while_condition = prop(root.find(".//WhileController"), "WhileController.condition")
     assert '"END"' in while_condition
-    scripts = {e.tag: prop(e, "script") for e in root.iter() if e.tag.startswith("JSR223")}
-    assert set(scripts) == {"JSR223PreProcessor", "JSR223Timer", "JSR223PostProcessor"}
 
-    embedded = re.search(r"parseText\('''(.*?)'''\)", scripts["JSR223PostProcessor"], re.S).group(1)
-    assert json.loads(embedded) == {**MODEL, "think_time_ms": THINK_TIMES, "path_params": PATH_PARAMS, "bodies": BODIES,
-                                    "correlation": {}, "session": None}
-    # JMeter sustituye ${...} en los scripts: no puede aparecer ninguno
+    scripts = {
+        e.tag: prop(e, "script")
+        for e in root.iter()
+        if e.tag.startswith("JSR223")
+    }
+
+    assert set(scripts) == {
+        "JSR223PreProcessor",
+        "JSR223Timer",
+        "JSR223PostProcessor"
+    }
+
+    embedded = re.search(
+        r"parseText\('''(.*?)'''\)",
+        scripts["JSR223PostProcessor"],
+        re.S
+    ).group(1)
+
+    assert json.loads(embedded) == {
+        **MODEL,
+        "think_time_ms": THINK_TIMES,
+        "path_params": PATH_PARAMS,
+        "query_params": {},
+        "bodies": BODIES,
+        "correlation": {},
+        "session": None,
+    }
+
+    # JMeter sustituye ${...} en los scripts
     assert all("${" not in script for script in scripts.values())
 
 
@@ -131,3 +154,35 @@ def test_skip_request_without_available_ids(tmp_path):
     # Control de peticiones sin identificadores disponibles
     assert "stormSkipRequest" in condition
     assert 'vars.put("stormSkipRequest", "true")' in script
+
+def test_query_params_in_model(tmp_path):
+    query_params = {
+        "GET /api/accounts/{id}": [
+            ["", 0.75],
+            ["page=0&size=5", 0.25],
+        ]
+    }
+
+    root = render(tmp_path, query_params=query_params)
+
+    script = prop(root.find(".//JSR223PostProcessor"), "script")
+
+    embedded = re.search(
+        r"parseText\('''(.*?)'''\)", script, re.S
+    ).group(1)
+
+    assert json.loads(embedded)["query_params"] == query_params
+
+
+def test_query_params_in_samplers(tmp_path):
+    root = render(tmp_path)
+
+    for sampler in root.iter("HTTPSamplerProxy"):
+        assert prop(sampler, "HTTPSampler.path").endswith(
+            "${stormQuery}"
+        )
+
+    script = prop(root.find(".//JSR223PostProcessor"), "script")
+
+    assert "model.query_params" in script
+    assert 'vars.put("stormQuery",' in script

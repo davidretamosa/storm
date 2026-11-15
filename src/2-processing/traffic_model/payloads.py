@@ -96,6 +96,22 @@ def build_path_params(df):
             result[request][name] = distribution(values[name])
     return result
 
+def build_query_params(df):
+    """Aprende las combinaciones de parámetros de consulta por petición."""
+    result = {}
+
+    if df is None or df.empty or "query" not in df.columns:
+        return result
+
+    for (method, endpoint), group in df.groupby(["method", "endpoint"]):
+        values = group["query"].fillna("").tolist()
+
+        # Solo modelamos peticiones con parámetros de consulta
+        if any(values):
+            request = method + " " + endpoint
+            result[request] = distribution(values)
+
+    return result
 
 # ---------------------------------------------------------------------------
 # 3. Bodies desde los logs: cómo es cada campo

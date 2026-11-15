@@ -179,3 +179,58 @@ def test_otel_trace_is_not_session(tmp_path):
     assert len(df) == 1
     assert df.iloc[0]["request_id"] == "span-123"
     assert pd.isna(df.iloc[0]["session_id"])
+
+def test_otel_query_params():
+    from log_parser.otel import parse_otel_record
+
+    record = {
+        "timestamp": "2026-11-15T10:00:00Z",
+        "attributes": {
+            "http.request.method": "GET",
+            "http.route": "/api/products",
+            "url.path": "/api/products",
+            "url.query": "page=0&size=5",
+        },
+    }
+
+    row = parse_otel_record(record)
+
+    assert row["endpoint"] == "/api/products"
+    assert row["path"] == "/api/products"
+    assert row["query"] == "page=0&size=5"
+
+
+def test_otel_legacy_query_params():
+    from log_parser.otel import parse_otel_record
+
+    record = {
+        "timestamp": "2026-11-15T10:00:00Z",
+        "attributes": {
+            "http.method": "GET",
+            "http.target": "/api/products?page=0&size=5",
+        },
+    }
+
+    row = parse_otel_record(record)
+
+    assert row["endpoint"] == "/api/products"
+    assert row["path"] == "/api/products"
+    assert row["query"] == "page=0&size=5"
+
+
+def test_json_query_params():
+    import json
+    from log_parser.parser import parse_line
+
+    record = {
+        "timestamp": "2026-11-15T10:00:00Z",
+        "method": "GET",
+        "endpoint": "/api/products",
+        "path": "/api/products?page=0&size=5",
+    }
+
+    row = parse_line(json.dumps(record))
+
+    assert row["endpoint"] == "/api/products"
+    assert row["path"] == "/api/products"
+    assert row["query"] == "page=0&size=5"

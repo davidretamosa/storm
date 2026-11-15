@@ -59,3 +59,39 @@ def test_body_models_skip_unsafe_and_nested_values():
 
 def test_no_bodies():
     assert build_body_models(requests(("GET", "/a", "/a", None))) == {}
+
+def test_build_query_params():
+    from traffic_model.payloads import build_query_params
+    import pandas as pd
+
+    df = pd.DataFrame({
+        "method": ["GET"] * 4,
+        "endpoint": ["/api/products"] * 4,
+        "query": [None, None, None, "page=0&size=5"],
+    })
+
+    assert build_query_params(df) == {
+        "GET /api/products": [
+            ["", 0.75],
+            ["page=0&size=5", 0.25],
+        ]
+    }
+
+
+def test_build_query_params_without_queries():
+    from traffic_model.payloads import build_query_params
+    import pandas as pd
+
+    df = pd.DataFrame({
+        "method": ["GET"],
+        "endpoint": ["/api/products"],
+        "query": [None],
+    })
+
+    assert build_query_params(df) == {}
+
+
+def test_build_query_params_without_logs():
+    from traffic_model.payloads import build_query_params
+
+    assert build_query_params(None) == {}

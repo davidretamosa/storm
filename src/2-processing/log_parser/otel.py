@@ -70,8 +70,20 @@ def parse_otel_record(record):
     row["user_id"] = attributes.get("user.id")
 
     row["method"] = method
-    row["endpoint"] = endpoint
-    row["path"] = attributes.get("url.path") or attributes.get("http.target") or endpoint
+    row["endpoint"] = endpoint.split("?", 1)[0]
+
+    # Ruta y parámetros de consulta
+    path = attributes.get("url.path") or attributes.get("http.target") or endpoint
+    query = attributes.get("url.query")
+
+    # Compatibilidad con el formato antiguo de OpenTelemetry
+    if "?" in path:
+        path, legacy_query = path.split("?", 1)
+        if query is None:
+            query = legacy_query
+
+    row["path"] = path
+    row["query"] = query
     row["status"] = attributes.get("http.response.status_code") or attributes.get("http.status_code")
     row["duration_ms"] = attributes.get("app.request.duration_ms")
     row["request_size_bytes"] = attributes.get("app.request.size_bytes")

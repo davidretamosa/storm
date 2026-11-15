@@ -23,6 +23,7 @@ COLUMNS = {
     "method": "method",
     "endpoint": "endpoint",
     "path": "path",
+    "query": "query",
     "status": "status",
     "durationMs": "duration_ms",
     "requestSizeBytes": "request_size_bytes",
@@ -62,11 +63,20 @@ def parse_line(line):
     row = {}
     for log_field, column in COLUMNS.items():
         row[column] = entry.get(log_field)
+    
+    # Extraer los parámetros de consulta si aparecen en la ruta
+    if isinstance(row["path"], str) and "?" in row["path"]:
+        path, query = row["path"].split("?", 1)
+        row["path"] = path
+
+        if row["query"] is None:
+            row["query"] = query
 
     # 5. El body solo nos sirve si es un objeto JSON ({"amount": 200.0}); null o texto -> None
     if not isinstance(row["body"], dict):
         row["body"] = None
-
+    # El endpoint no debe incluir parámetros de consulta
+    row["endpoint"] = row["endpoint"].split("?", 1)[0]
     return row
 
 def parse_logs(log_file_path):
