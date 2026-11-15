@@ -117,6 +117,38 @@ def count_from_logs(df):
     transition_counts = table_to_dict(table)
     return start_counts, transition_counts
 
+def build_status_transitions(df):
+    """Aprende transiciones condicionadas al código de respuesta HTTP."""
+
+    # Sin sesiones o códigos HTTP no se pueden aprender transiciones condicionadas
+    if df is None or df.empty:
+        return {}
+
+    if "session_id" not in df.columns or "status" not in df.columns:
+        return {}
+
+    if df["session_id"].isna().all():
+        return {}
+
+    steps = get_steps(df)
+    steps["next_key"] = steps["next_key"].fillna(END)
+    steps = steps.dropna(subset=["status"])
+
+    result = {}
+
+    for (state, status), group in steps.groupby(["key", "status"]):
+        probabilities = (
+            group["next_key"]
+            .value_counts(normalize=True)
+            .to_dict()
+        )
+
+        result.setdefault(state, {})[str(int(status))] = {
+            target: float(probability)
+            for target, probability in probabilities.items()
+        }
+
+    return result
 
 def mix(counts, options, jar_weight):
     """Mezcla lo visto en los logs con el .jar (el "prior") y lo pasa a probabilidades.
@@ -197,5 +229,6 @@ def build_markov_model(df=None, min_probability=0.0, max_steps=50, endpoints=Non
         "states": states,
         "start": start,
         "transitions": transitions,
+        "status_transitions": build_status_transitions(df),
         "max_steps": max_steps,
     }

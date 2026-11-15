@@ -109,3 +109,46 @@ def test_single_request_sessions_count():
 
     df = pd.DataFrame({"session_id": ["a", "b"], "timestamp": pd.to_datetime(["2026-10-01T09:00:00"] * 2)})
     assert peak_concurrent_sessions(df) == 2
+
+def test_status_conditioned_transitions():
+    import pandas as pd
+    from traffic_model.markov import build_markov_model
+
+    df = pd.DataFrame([
+        ["s1", 1, "POST", "/api/books", 201],
+        ["s1", 2, "GET", "/api/books/{id}", 200],
+        ["s2", 3, "POST", "/api/books", 409],
+        ["s3", 4, "POST", "/api/books", 409],
+        ["s3", 5, "POST", "/api/books", 201],
+        ["s3", 6, "GET", "/api/books/{id}", 200],
+    ], columns=[
+        "session_id", "timestamp", "method", "endpoint", "status"
+    ])
+
+    model = build_markov_model(df)
+    transitions = model["status_transitions"]
+
+    assert transitions["POST /api/books"]["201"] == {
+        "GET /api/books/{id}": 1.0
+    }
+
+    assert transitions["POST /api/books"]["409"] == {
+        "POST /api/books": 0.5,
+        "END": 0.5
+    }
+
+
+def test_status_transitions_without_sessions():
+    import pandas as pd
+    from traffic_model.markov import build_markov_model
+
+    df = pd.DataFrame([
+        [None, 1, "GET", "/api/books", 200],
+        [None, 2, "POST", "/api/books", 409],
+    ], columns=[
+        "session_id", "timestamp", "method", "endpoint", "status"
+    ])
+
+    model = build_markov_model(df)
+
+    assert model["status_transitions"] == {}

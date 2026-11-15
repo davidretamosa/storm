@@ -7,7 +7,18 @@ rememberDeletedId(current, prev)
 int steps = Integer.parseInt(vars.get("stormSteps")) + 1
 vars.put("stormSteps", String.valueOf(steps))
 
-def next = pick(model.transitions[current] ?: [END: 1])
+// Código HTTP de la petición anterior
+def status = prev.getResponseCode()
+
+// Buscar transiciones condicionadas al código HTTP
+def conditioned = model.status_transitions
+    ?.get(current)
+    ?.get(status)
+
+// Si no hay información específica, utilizar el modelo original
+def distribution = conditioned ?: model.transitions[current] ?: [END: 1]
+
+def next = pick(distribution)
 
 if (steps >= model.max_steps) {
     next = "END"
