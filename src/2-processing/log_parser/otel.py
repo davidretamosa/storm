@@ -6,12 +6,42 @@ las demás líneas se leen con el formato JSON acordado con input.
 import json
 from datetime import datetime, timezone
 
+def normalize_attributes(attributes):
+    """Normaliza los atributos OpenTelemetry a un diccionario."""
+
+    if isinstance(attributes, dict):
+        return attributes
+
+    if not isinstance(attributes, list):
+        return {}
+
+    result = {}
+
+    for attribute in attributes:
+        if not isinstance(attribute, dict):
+            continue
+
+        key = attribute.get("key")
+        value = attribute.get("value", {})
+
+        if not key or not isinstance(value, dict):
+            continue
+
+        for value_type in (
+            "stringValue",
+            "intValue",
+            "doubleValue",
+            "boolValue",
+        ):
+            if value_type in value:
+                result[key] = value[value_type]
+                break
+
+    return result
 
 def parse_otel_record(record):
     """Un registro OTel (ya leído como diccionario) -> fila con nuestras columnas, o None si no vale."""
-    attributes = record.get("attributes", {})
-    if not isinstance(attributes, dict):
-        return None
+    attributes = normalize_attributes(record.get("attributes", {}))
 
     # 1. Método HTTP
     method = (
@@ -35,7 +65,8 @@ def parse_otel_record(record):
 
     # 3. Identificadores (acuerdo de proyecto + fallback estándar OTel)
     row["request_id"] = attributes.get("request.id") or record.get("spanId")
-    row["session_id"] = attributes.get("session.id") or record.get("traceId")
+    # Una traza no equivale a una sesión de usuario.
+    row["session_id"] = attributes.get("session.id")
     row["user_id"] = attributes.get("user.id")
 
     row["method"] = method
@@ -79,3 +110,23 @@ def parse_otel_record(record):
         return None
 
     return row
+
+def parse_otlp_export(record):
+    """Extrae las peticiones HTTP de una exportación OTLP."""
+
+    rows = []
+
+    for resource in record.get("resourceSpans", []):
+        for scope in resource.get("scopeSpans", []):
+            for span in scope.get("spans", []):
+
+                # Solo se procesan spans de servidor.
+                if span.get("kind") not in (2, "SPAN_KIND_SERVER"):
+                    continue
+
+                row = parse_otel_record(span)
+
+                if row is not None:
+                    rows.append(row)
+
+    return rows

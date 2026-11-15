@@ -73,3 +73,109 @@ def test_otel_lines(tmp_path):
     assert by_session.loc["sess-1", "body"] == {"amount": 50.5}
     # El del formato del proyecto se sigue leyendo igual
     assert by_session.loc["sess-2", "endpoint"] == "/api/users/{id}"
+
+def test_otel_list_attributes(tmp_path):
+    import json
+
+    otel = {
+        "startTimeUnixNano": "1790845200000000000",
+        "spanId": "s1",
+        "attributes": [
+            {
+                "key": "http.request.method",
+                "value": {"stringValue": "GET"},
+            },
+            {
+                "key": "http.route",
+                "value": {"stringValue": "/employees/{id}"},
+            },
+            {
+                "key": "url.path",
+                "value": {"stringValue": "/employees/3"},
+            },
+            {
+                "key": "http.response.status_code",
+                "value": {"intValue": "200"},
+            },
+        ],
+    }
+
+    path = tmp_path / "otel.log"
+    path.write_text(json.dumps(otel) + "\n", encoding="utf-8")
+
+    df = parse_logs(str(path))
+
+    assert len(df) == 1
+    assert df.iloc[0]["method"] == "GET"
+    assert df.iloc[0]["endpoint"] == "/employees/{id}"
+    assert df.iloc[0]["path"] == "/employees/3"
+    assert df.iloc[0]["status"] == 200
+
+def test_otlp_export(tmp_path):
+    import json
+
+    http_span = {
+        "kind": 2,
+        "startTimeUnixNano": "1790845200000000000",
+        "spanId": "s1",
+        "attributes": [
+            {
+                "key": "http.request.method",
+                "value": {"stringValue": "GET"},
+            },
+            {
+                "key": "http.route",
+                "value": {"stringValue": "/employees"},
+            },
+        ],
+    }
+
+    internal_span = {
+        **http_span,
+        "kind": 3,
+        "spanId": "s2",
+    }
+
+    export = {
+        "resourceSpans": [
+            {
+                "scopeSpans": [
+                    {
+                        "spans": [http_span, internal_span]
+                    }
+                ]
+            }
+        ]
+    }
+
+    path = tmp_path / "traces.json"
+    path.write_text(json.dumps(export), encoding="utf-8")
+
+    df = parse_logs(str(path))
+
+    assert len(df) == 1
+    assert df.iloc[0]["method"] == "GET"
+    assert df.iloc[0]["endpoint"] == "/employees"
+    assert df.iloc[0]["request_id"] == "s1"
+
+def test_otel_trace_is_not_session(tmp_path):
+    import json
+
+    otel = {
+        "startTimeUnixNano": "1790845200000000000",
+        "traceId": "trace-123",
+        "spanId": "span-123",
+        "attributes": {
+            "http.request.method": "GET",
+            "http.route": "/employees",
+        },
+    }
+
+    path = tmp_path / "otel.log"
+    path.write_text(json.dumps(otel), encoding="utf-8")
+
+    df = parse_logs(str(path))
+
+    assert len(df) == 1
+    assert df.iloc[0]["request_id"] == "span-123"
+    assert pd.isna(df.iloc[0]["session_id"])

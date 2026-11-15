@@ -11,7 +11,7 @@ import json
 
 import pandas as pd
 
-from log_parser.otel import parse_otel_record
+from log_parser.otel import parse_otel_record, parse_otlp_export
 
 # Nombre del campo en el log -> nombre de la columna en nuestra tabla.
 # Los campos del log que no estén aquí se ignoran.
@@ -69,30 +69,41 @@ def parse_line(line):
 
     return row
 
-
 def parse_logs(log_file_path):
-    """Lee el log entero y lo devuelve como una tabla (DataFrame) ordenada por tiempo."""
-    # 1. Leemos el archivo línea a línea y nos quedamos con las válidas
+    """Lee el log entero y lo devuelve como un DataFrame ordenado por tiempo."""
+
+    # 1. Leemos el archivo línea a línea.
     rows = []
     with open(log_file_path, encoding="utf-8") as f:
         for line in f:
-            row = parse_line(line)
-            if row is not None:
-                rows.append(row)
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
 
-    # 2. Convertimos la lista de filas en una tabla
+            # Exportación OTLP con múltiples spans.
+            if isinstance(entry, dict) and "resourceSpans" in entry:
+                rows.extend(parse_otlp_export(entry))
+            else:
+                # Formatos que ya soportaba STORM.
+                row = parse_line(line)
+                if row is not None:
+                    rows.append(row)
+
+    # 2. Convertimos las filas en un DataFrame.
     df = pd.DataFrame(rows, columns=list(COLUMNS.values()))
     if df.empty:
         return df
 
-    # 3. Pasamos cada columna a su tipo de dato: fechas y números en vez de texto
+    # 3. Convertimos los tipos de datos.
     df["timestamp"] = pd.to_datetime(df["timestamp"], format="ISO8601", utc=True)
     df["status"] = pd.to_numeric(df["status"], errors="coerce")
     df["duration_ms"] = pd.to_numeric(df["duration_ms"], errors="coerce")
     df["request_size_bytes"] = pd.to_numeric(df["request_size_bytes"], errors="coerce")
     df["response_size_bytes"] = pd.to_numeric(df["response_size_bytes"], errors="coerce")
 
-    # 4. Ordenamos por hora (los logs no siempre vienen en orden) y renumeramos las filas
+    # 4. Ordenamos las peticiones por tiempo.
     df = df.sort_values("timestamp", kind="stable")
     df = df.reset_index(drop=True)
     return df
+
