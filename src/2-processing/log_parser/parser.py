@@ -17,6 +17,7 @@ from log_parser.otel import parse_otel_record, parse_otlp_export
 # Los campos del log que no estén aquí se ignoran.
 COLUMNS = {
     "timestamp": "timestamp",
+    "timestampKind": "timestamp_kind",
     "requestId": "request_id",
     "sessionId": "session_id",
     "userId": "user_id",
@@ -63,7 +64,10 @@ def parse_line(line):
     row = {}
     for log_field, column in COLUMNS.items():
         row[column] = entry.get(log_field)
-    
+    # El formato JSON acordado con la aplicación del banco
+    # registra el timestamp al finalizar la petición.
+    if row["timestamp_kind"] is None:
+        row["timestamp_kind"] = "end"
     # Extraer los parámetros de consulta si aparecen en la ruta
     if isinstance(row["path"], str) and "?" in row["path"]:
         path, query = row["path"].split("?", 1)

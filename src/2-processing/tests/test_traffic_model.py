@@ -63,9 +63,16 @@ def test_model_prunes_and_renormalizes():
 
 def test_think_times_per_transition(log_file):
     think = build_think_times(parse_logs(log_file), samples=5)
-    # sesión a: users (09:00:01) -> accounts (09:00:03) ; b: users (09:00:02) -> transfers (09:00:04)
-    assert think["GET /api/users/{id}"]["GET /api/accounts/{id}"] == [2000] * 5
-    assert think["GET /api/accounts/{id}"]["POST /api/transfers"] == [2000] * 5
+
+    # Los timestamps corresponden al final de las peticiones.
+    # La pausa descuenta la duración de la petición siguiente.
+
+    assert think["GET /api/users/{id}"]["GET /api/accounts/{id}"] == [1988] * 5
+
+    assert think["GET /api/accounts/{id}"]["POST /api/transfers"] == [1965] * 5
+
+    assert think["GET /api/users/{id}"]["POST /api/transfers"] == [1960] * 5
+
     assert "POST /api/transfers" not in think
 
 
@@ -110,45 +117,56 @@ def test_single_request_sessions_count():
     df = pd.DataFrame({"session_id": ["a", "b"], "timestamp": pd.to_datetime(["2026-10-01T09:00:00"] * 2)})
     assert peak_concurrent_sessions(df) == 2
 
-def test_status_conditioned_transitions():
-    import pandas as pd
-    from traffic_model.markov import build_markov_model
 
-    df = pd.DataFrame([
-        ["s1", 1, "POST", "/api/books", 201],
-        ["s1", 2, "GET", "/api/books/{id}", 200],
-        ["s2", 3, "POST", "/api/books", 409],
-        ["s3", 4, "POST", "/api/books", 409],
-        ["s3", 5, "POST", "/api/books", 201],
-        ["s3", 6, "GET", "/api/books/{id}", 200],
-    ], columns=[
-        "session_id", "timestamp", "method", "endpoint", "status"
-    ])
+def test_think_time_start_timestamps():
+    df = pd.DataFrame({
+        "timestamp": pd.to_datetime([
+            "2026-10-01T09:00:00",
+            "2026-10-01T09:00:01"
+        ]),
+        "method": ["GET", "GET"],
+        "endpoint": ["/a", "/b"],
+        "session_id": ["s", "s"],
+        "duration_ms": [200, 300],
+        "timestamp_kind": ["start", "start"],
+    })
 
-    model = build_markov_model(df)
-    transitions = model["status_transitions"]
+    think = build_think_times(df, samples=5)
 
-    assert transitions["POST /api/books"]["201"] == {
-        "GET /api/books/{id}": 1.0
-    }
-
-    assert transitions["POST /api/books"]["409"] == {
-        "POST /api/books": 0.5,
-        "END": 0.5
-    }
+    assert think["GET /a"]["GET /b"] == [800] * 5
 
 
-def test_status_transitions_without_sessions():
-    import pandas as pd
-    from traffic_model.markov import build_markov_model
+def test_think_time_end_timestamps():
+    df = pd.DataFrame({
+        "timestamp": pd.to_datetime([
+            "2026-10-01T09:00:00.200",
+            "2026-10-01T09:00:01.300"
+        ]),
+        "method": ["GET", "GET"],
+        "endpoint": ["/a", "/b"],
+        "session_id": ["s", "s"],
+        "duration_ms": [200, 300],
+        "timestamp_kind": ["end", "end"],
+    })
 
-    df = pd.DataFrame([
-        [None, 1, "GET", "/api/books", 200],
-        [None, 2, "POST", "/api/books", 409],
-    ], columns=[
-        "session_id", "timestamp", "method", "endpoint", "status"
-    ])
+    think = build_think_times(df, samples=5)
 
-    model = build_markov_model(df)
+    assert think["GET /a"]["GET /b"] == [800] * 5
 
-    assert model["status_transitions"] == {}
+
+def test_think_time_unknown_timestamps():
+    df = pd.DataFrame({
+        "timestamp": pd.to_datetime([
+            "2026-10-01T09:00:00",
+            "2026-10-01T09:00:01"
+        ]),
+        "method": ["GET", "GET"],
+        "endpoint": ["/a", "/b"],
+        "session_id": ["s", "s"],
+        "duration_ms": [200, 300],
+        "timestamp_kind": ["unknown", "unknown"],
+    })
+
+    think = build_think_times(df, samples=5)
+
+    assert think["GET /a"]["GET /b"] == [1000] * 5

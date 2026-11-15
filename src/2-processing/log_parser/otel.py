@@ -85,7 +85,24 @@ def parse_otel_record(record):
     row["path"] = path
     row["query"] = query
     row["status"] = attributes.get("http.response.status_code") or attributes.get("http.status_code")
+    # Duración de la petición HTTP en milisegundos
     row["duration_ms"] = attributes.get("app.request.duration_ms")
+
+    # Si no existe el atributo personalizado, calcular
+    # la duración a partir de los timestamps del span OTLP.
+    if row["duration_ms"] is None:
+        start = record.get("startTimeUnixNano")
+        end = record.get("endTimeUnixNano")
+
+        if start is not None and end is not None:
+            try:
+                duration = (int(end) - int(start)) / 1_000_000
+
+                if duration >= 0:
+                    row["duration_ms"] = duration
+
+            except (ValueError, TypeError, OverflowError):
+                pass
     row["request_size_bytes"] = attributes.get("app.request.size_bytes")
     row["response_size_bytes"] = attributes.get("app.response.size_bytes")
 
@@ -115,8 +132,11 @@ def parse_otel_record(record):
             try:
                 dt = datetime.fromtimestamp(int(nano_ts) / 1_000_000_000, tz=timezone.utc)
                 row["timestamp"] = dt.isoformat()
+                if record.get("startTimeUnixNano") is not None:
+                    row["timestamp_kind"] = "start"
             except (ValueError, OverflowError):
                 row["timestamp"] = None
+                row["timestamp_kind"] = "unknown"
 
     if not row["timestamp"]:
         return None

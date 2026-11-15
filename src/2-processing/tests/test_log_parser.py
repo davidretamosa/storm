@@ -234,3 +234,53 @@ def test_json_query_params():
     assert row["endpoint"] == "/api/products"
     assert row["path"] == "/api/products"
     assert row["query"] == "page=0&size=5"
+
+def test_otlp_span_duration():
+    from log_parser.otel import parse_otel_record
+
+    record = {
+        "startTimeUnixNano": "1794766173000000000",
+        "endTimeUnixNano": "1794766173200000000",
+        "attributes": {
+            "http.request.method": "GET",
+            "http.route": "/api/employees"
+        }
+    }
+
+    row = parse_otel_record(record)
+
+    assert row["duration_ms"] == 200.0
+
+
+def test_otel_custom_duration():
+    from log_parser.otel import parse_otel_record
+
+    record = {
+        "startTimeUnixNano": "1794766173000000000",
+        "endTimeUnixNano": "1794766173200000000",
+        "attributes": {
+            "http.request.method": "GET",
+            "http.route": "/api/employees",
+            "app.request.duration_ms": 150
+        }
+    }
+
+    row = parse_otel_record(record)
+
+    assert row["duration_ms"] == 150
+
+
+def test_otel_missing_duration():
+    from log_parser.otel import parse_otel_record
+
+    record = {
+        "startTimeUnixNano": "1794766173000000000",
+        "attributes": {
+            "http.request.method": "GET",
+            "http.route": "/api/employees"
+        }
+    }
+
+    row = parse_otel_record(record)
+
+    assert row["duration_ms"] is None

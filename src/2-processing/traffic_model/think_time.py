@@ -32,9 +32,40 @@ def build_think_times(df, samples=20, max_ms=120_000):
     # Hora de la siguiente petición de la misma sesión (igual que next_key, pero con la hora)
     steps["next_timestamp"] = steps.groupby("session_id")["timestamp"].shift(-1)
 
-    # Pausa = hora de la siguiente - hora de esta, en milisegundos, entre 0 y max_ms
-    steps["gap_ms"] = (steps["next_timestamp"] - steps["timestamp"]).dt.total_seconds() * 1000
-    steps["gap_ms"] = steps["gap_ms"].clip(lower=0, upper=max_ms)
+    # Diferencia temporal entre peticiones consecutivas
+    steps["gap_ms"] = (
+        steps["next_timestamp"] - steps["timestamp"]
+    ).dt.total_seconds() * 1000
+
+    # Corregir la pausa según el significado del timestamp
+    if "duration_ms" in steps.columns and "timestamp_kind" in steps.columns:
+
+        duration = steps["duration_ms"].clip(lower=0).fillna(0)
+
+        next_duration = duration.groupby(
+            steps["session_id"]
+        ).shift(-1).fillna(0)
+
+        next_kind = steps.groupby(
+            "session_id"
+        )["timestamp_kind"].shift(-1)
+
+        # Si el timestamp actual es de inicio,
+        # descontar la duración de la petición actual.
+        steps.loc[
+            steps["timestamp_kind"] == "start", "gap_ms"
+        ] -= duration
+
+        # Si el timestamp siguiente es de final,
+        # descontar la duración de la petición siguiente.
+        steps.loc[
+            next_kind == "end", "gap_ms"
+        ] -= next_duration
+
+    # Limitar las pausas al intervalo permitido
+    steps["gap_ms"] = steps["gap_ms"].clip(
+        lower=0, upper=max_ms
+    )
 
     # La última petición de cada sesión no tiene pausa
     pairs = steps.dropna(subset=["next_key"])
