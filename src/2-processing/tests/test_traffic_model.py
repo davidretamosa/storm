@@ -13,12 +13,31 @@ def test_markov_transitions_follow_each_session(log_file):
     assert transitions["GET /api/users/{id}"] == {"GET /api/accounts/{id}": 0.5, "POST /api/transfers": 0.5}
     assert transitions["GET /api/accounts/{id}"] == {"POST /api/transfers": 1.0}
 
+def test_markov_without_sessions():
+    df = pd.DataFrame({
+        "timestamp": [1, 2, 3, 4],
+        "method": ["GET"] * 4,
+        "endpoint": ["/a", "/a", "/a", "/b"],
+        "session_id": [None] * 4,
+    })
 
-def test_markov_requires_session_field():
-    df = pd.DataFrame({"timestamp": [1, 2], "method": ["GET"] * 2, "endpoint": ["/a", "/b"], "session_id": [None, None]})
-    with pytest.raises(ValueError, match="sessionId"):
-        build_markov_model(df)
+    model = build_markov_model(df)
 
+    # Sin sesiones, se utilizan las frecuencias globales.
+    assert model["start"] == {
+        "GET /a": 0.75,
+        "GET /b": 0.25,
+    }
+
+    assert model["states"] == ["GET /a", "GET /b"]
+
+    # Las transiciones son estimadas, no observadas.
+    for state in model["states"]:
+        assert model["transitions"][state] == pytest.approx({
+            "GET /a": 0.6,
+            "GET /b": 0.2,
+            END: 0.2,
+        })
 
 def test_model_has_start_and_end(log_file):
     model = build_markov_model(parse_logs(log_file))
