@@ -50,19 +50,37 @@ def deleted_resource(state):
         "param": param
     }
 
-def resource_of_field(field, resources):
-    """El recurso al que pertenece un campo id del body, por su nombre.
+def singularize(word):
+    """Convierte plurales ingleses comunes a singular."""
 
-    'userId' -> '/api/users' ; 'fromAccountId' -> '/api/accounts' ; 'id' -> None
-    """
-    base = re.sub(r"(_id|Id|ID)$", "", field).lower()      # "fromAccountId" -> "fromaccount"
+    word = word.lower()
+
+    if word.endswith("ies"):
+        return word[:-3] + "y"
+
+    if word.endswith(("sses", "shes", "ches", "xes", "zes")):
+        return word[:-2]
+
+    if word.endswith("s") and not word.endswith("ss"):
+        return word[:-1]
+
+    return word
+
+def resource_of_field(field, resources):
+    """Identifica el recurso asociado a un campo id del body."""
+
+    base = re.sub(r"(_id|Id|ID)$", "", field).lower()
+
     if not base:
         return None
+
     for resource in sorted(resources):
-        segment = resource.rstrip("/").split("/")[-1].lower()   # "/api/accounts" -> "accounts"
-        singular = segment[:-1] if segment.endswith("s") else segment
+        segment = resource.rstrip("/").split("/")[-1].lower()
+        singular = singularize(segment)
+
         if base.endswith(singular):
             return resource
+
     return None
 
 

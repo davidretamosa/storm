@@ -264,3 +264,85 @@ def test_header_missing_values():
         [{"x-user-id": ["1"]}, 0.5],
         [{}, 0.5],
     ]
+
+def test_resource_singularization():
+    from traffic_model.correlation import singularize
+
+    cases = {
+        "accounts": "account",
+        "products": "product",
+        "users": "user",
+        "tasks": "task",
+        "categories": "category",
+        "companies": "company",
+        "addresses": "address",
+        "boxes": "box",
+        "branches": "branch",
+        "access": "access",
+    }
+
+    for plural, singular in cases.items():
+        assert singularize(plural) == singular
+
+
+def test_correlation_plural_resources():
+    from traffic_model.correlation import resource_of_field
+
+    resources = {
+        "/api/categories",
+        "/api/companies",
+        "/api/addresses",
+        "/api/products",
+        "/api/accounts",
+    }
+
+    assert resource_of_field(
+        "categoryId", resources
+    ) == "/api/categories"
+
+    assert resource_of_field(
+        "companyId", resources
+    ) == "/api/companies"
+
+    assert resource_of_field(
+        "addressId", resources
+    ) == "/api/addresses"
+
+    assert resource_of_field(
+        "productId", resources
+    ) == "/api/products"
+
+    assert resource_of_field(
+        "fromAccountId", resources
+    ) == "/api/accounts"
+
+    assert resource_of_field(
+        "unknownId", resources
+    ) is None
+
+
+def test_body_correlation_with_categories():
+    from traffic_model.correlation import build_correlation
+
+    model = {
+        "states": [
+            "POST /api/categories",
+            "POST /api/tasks",
+            "GET /api/tasks/{id}",
+        ]
+    }
+
+    bodies = {
+        "POST /api/tasks": {
+            "title": {},
+            "categoryId": {},
+        }
+    }
+
+    correlation = build_correlation(model, bodies)
+
+    assert correlation["body_resources"] == {
+        "POST /api/tasks": {
+            "categoryId": "/api/categories"
+        }
+    }
