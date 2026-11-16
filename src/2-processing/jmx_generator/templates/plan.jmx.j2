@@ -24,6 +24,7 @@
         <stringProp name="HTTPSampler.port">${__P(port,{{ port }})}</stringProp>
       </ConfigTestElement>
       <hashTree/>
+
       <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="Usuarios virtuales">
         <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
         <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController">
@@ -37,6 +38,7 @@
         <stringProp name="ThreadGroup.delay">0</stringProp>
         <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
       </ThreadGroup>
+
       <hashTree>
         {% if session %}
         <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="Sesión de la app">
@@ -49,6 +51,7 @@
         </HeaderManager>
         <hashTree/>
         {% endif %}
+
         <TestAction guiclass="TestActionGui" testclass="TestAction" testname="Nueva sesión">
           <intProp name="ActionProcessor.action">1</intProp>
           <intProp name="ActionProcessor.target">0</intProp>
@@ -64,6 +67,7 @@
           </JSR223PreProcessor>
           <hashTree/>
         </hashTree>
+
         {% if session %}
         <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Iniciar sesión">
           <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
@@ -91,6 +95,7 @@
             </collectionProp>
           </HeaderManager>
           <hashTree/>
+
           <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Guardar la sesión">
             <stringProp name="scriptLanguage">groovy</stringProp>
             <stringProp name="parameters"></stringProp>
@@ -101,10 +106,21 @@
           <hashTree/>
         </hashTree>
         {% endif %}
+
         <WhileController guiclass="WhileControllerGui" testclass="WhileController" testname="Mientras la sesión siga">
           <stringProp name="WhileController.condition">${__groovy(vars.get("stormState") != "END" &amp;&amp; vars.get("stormSkipRequest") != "true")}</stringProp>
         </WhileController>
+
         <hashTree>
+          <JSR223PreProcessor guiclass="TestBeanGUI" testclass="JSR223PreProcessor" testname="Preparar cabeceras HTTP">
+            <stringProp name="scriptLanguage">groovy</stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="script">{{ request_headers_script }}</stringProp>
+          </JSR223PreProcessor>
+          <hashTree/>
+
           <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Elegir siguiente petición (Markov)">
             <stringProp name="scriptLanguage">groovy</stringProp>
             <stringProp name="parameters"></stringProp>
@@ -113,9 +129,11 @@
             <stringProp name="script">{{ next_request_script }}</stringProp>
           </JSR223PostProcessor>
           <hashTree/>
+
           <SwitchController guiclass="SwitchControllerGui" testclass="SwitchController" testname="Petición actual">
             <stringProp name="SwitchController.value">${stormIndex}</stringProp>
           </SwitchController>
+
           <hashTree>
             {% for s in samplers %}
             <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="{{ s.name }}">
@@ -135,11 +153,13 @@
                 <collectionProp name="Arguments.arguments"/>
               </elementProp>
               {% endif %}
+
               <stringProp name="HTTPSampler.path">{{ s.path }}${stormQuery}</stringProp>
               <stringProp name="HTTPSampler.method">{{ s.method }}</stringProp>
               <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
               <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
             </HTTPSamplerProxy>
+
             {% if s.has_body %}
             <hashTree>
               <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="JSON">

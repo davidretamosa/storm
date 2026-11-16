@@ -12,6 +12,7 @@ import json
 import pandas as pd
 
 from log_parser.otel import parse_otel_record, parse_otlp_export
+from log_parser.headers import normalize_headers
 
 # Nombre del campo en el log -> nombre de la columna en nuestra tabla.
 # Los campos del log que no estén aquí se ignoran.
@@ -25,6 +26,7 @@ COLUMNS = {
     "endpoint": "endpoint",
     "path": "path",
     "query": "query",
+    "headers": "headers",
     "status": "status",
     "durationMs": "duration_ms",
     "requestSizeBytes": "request_size_bytes",
@@ -64,6 +66,9 @@ def parse_line(line):
     row = {}
     for log_field, column in COLUMNS.items():
         row[column] = entry.get(log_field)
+    # Normalizar y filtrar las cabeceras HTTP
+    row["headers"] = normalize_headers(row["headers"])
+
     # El formato JSON acordado con la aplicación del banco
     # registra el timestamp al finalizar la petición.
     if row["timestamp_kind"] is None:

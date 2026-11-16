@@ -183,6 +183,13 @@ def goTo = { String state ->
     def query = queries ? pickValue(queries) : ""
 
     vars.put("stormQuery", query ? "?" + query : "")
+    // Seleccionar las cabeceras HTTP según su distribución
+    def headerDistribution = model.header_models?.get(state) ?: []
+
+    def selectedHeaders = headerDistribution ?
+        pickValue(headerDistribution) : [:]
+
+    vars.putObject("stormHeaders", selectedHeaders ?: [:])
     def bodyModel = model.bodies[state]
     if (bodyModel) {
         def body = buildBody(bodyModel)

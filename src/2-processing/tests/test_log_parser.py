@@ -284,3 +284,73 @@ def test_otel_missing_duration():
     row = parse_otel_record(record)
 
     assert row["duration_ms"] is None
+
+def test_otel_request_headers():
+    from log_parser.otel import parse_otel_record
+
+    record = {
+        "timestamp": "2026-11-15T10:00:00Z",
+        "attributes": [
+            {
+                "key": "http.request.method",
+                "value": {"stringValue": "GET"}
+            },
+            {
+                "key": "http.route",
+                "value": {"stringValue": "/api/items"}
+            },
+            {
+                "key": "http.request.header.x-user-id",
+                "value": {
+                    "arrayValue": {
+                        "values": [
+                            {"stringValue": "123"}
+                        ]
+                    }
+                }
+            }
+        ]
+    }
+
+    row = parse_otel_record(record)
+
+    assert row["headers"] == {
+        "x-user-id": ["123"]
+    }
+
+
+def test_normalize_headers():
+    from log_parser.headers import normalize_headers
+
+    headers = {
+        "X-User-Id": "123",
+        "Accept-Language": ["ca", "en"]
+    }
+
+    assert normalize_headers(headers) == {
+        "x-user-id": ["123"],
+        "accept-language": ["ca", "en"]
+    }
+
+
+def test_filter_sensitive_headers():
+    from log_parser.headers import normalize_headers
+
+    headers = {
+        "Authorization": "Bearer example",
+        "Cookie": "session=123",
+        "X-Api-Key": "example",
+        "Content-Length": "100",
+        "X-Tenant-Id": "5"
+    }
+
+    assert normalize_headers(headers) == {
+        "x-tenant-id": ["5"]
+    }
+
+
+def test_missing_headers():
+    from log_parser.headers import normalize_headers
+
+    assert normalize_headers(None) == {}
+    assert normalize_headers({}) == {}

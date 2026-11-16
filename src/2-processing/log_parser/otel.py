@@ -5,6 +5,7 @@ las demás líneas se leen con el formato JSON acordado con input.
 """
 import json
 from datetime import datetime, timezone
+from log_parser.headers import normalize_headers
 
 def normalize_attributes(attributes):
     """Normaliza los atributos OpenTelemetry a un diccionario."""
@@ -18,6 +19,7 @@ def normalize_attributes(attributes):
     result = {}
 
     for attribute in attributes:
+
         if not isinstance(attribute, dict):
             continue
 
@@ -25,6 +27,18 @@ def normalize_attributes(attributes):
         value = attribute.get("value", {})
 
         if not key or not isinstance(value, dict):
+            continue
+
+        # Normalizar arrays de strings (cabeceras HTTP)
+        if "arrayValue" in value:
+            items = value["arrayValue"].get("values", [])
+
+            result[key] = [
+                item["stringValue"]
+                for item in items
+                if isinstance(item, dict)
+                and "stringValue" in item
+            ]
             continue
 
         for value_type in (
@@ -84,6 +98,16 @@ def parse_otel_record(record):
 
     row["path"] = path
     row["query"] = query
+    # Extraer las cabeceras HTTP de la petición
+    headers = {}
+    prefix = "http.request.header."
+
+    for key, value in attributes.items():
+        if key.startswith(prefix):
+            name = key[len(prefix):].lower()
+            headers[name] = value
+
+    row["headers"] = normalize_headers(headers)
     row["status"] = attributes.get("http.response.status_code") or attributes.get("http.status_code")
     # Duración de la petición HTTP en milisegundos
     row["duration_ms"] = attributes.get("app.request.duration_ms")

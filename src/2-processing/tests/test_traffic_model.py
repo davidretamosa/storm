@@ -170,3 +170,97 @@ def test_think_time_unknown_timestamps():
     think = build_think_times(df, samples=5)
 
     assert think["GET /a"]["GET /b"] == [1000] * 5
+
+def test_header_distribution():
+    import pandas as pd
+    from traffic_model.headers import build_header_models
+
+    df = pd.DataFrame({
+        "method": ["GET"] * 4,
+        "endpoint": ["/api/items"] * 4,
+        "headers": [
+            {"x-user-id": ["1"]},
+            {"x-user-id": ["1"]},
+            {"x-user-id": ["2"]},
+            {"x-user-id": ["3"]},
+        ],
+    })
+
+    result = build_header_models(df, ["x-user-id"])
+
+    assert result["GET /api/items"] == [
+        [{"x-user-id": ["1"]}, 0.50],
+        [{"x-user-id": ["2"]}, 0.25],
+        [{"x-user-id": ["3"]}, 0.25],
+    ]
+
+
+def test_header_combinations():
+    import pandas as pd
+    from traffic_model.headers import build_header_models
+
+    df = pd.DataFrame({
+        "method": ["GET", "GET"],
+        "endpoint": ["/api/items", "/api/items"],
+        "headers": [
+            {"x-user-id": ["1"], "accept-language": ["ca"]},
+            {"x-user-id": ["2"], "accept-language": ["en"]},
+        ],
+    })
+
+    result = build_header_models(
+        df, ["x-user-id", "accept-language"]
+    )
+
+    assert result["GET /api/items"] == [
+        [{"x-user-id": ["1"], "accept-language": ["ca"]}, 0.5],
+        [{"x-user-id": ["2"], "accept-language": ["en"]}, 0.5],
+    ]
+
+
+def test_header_allowlist():
+    import pandas as pd
+    from traffic_model.headers import build_header_models
+
+    df = pd.DataFrame({
+        "method": ["GET"],
+        "endpoint": ["/api/items"],
+        "headers": [
+            {
+                "x-user-id": ["1"],
+                "accept-language": ["ca"],
+                "authorization": ["Bearer example"],
+            }
+        ],
+    })
+
+    result = build_header_models(
+        df, ["x-user-id", "authorization"]
+    )
+
+    assert result["GET /api/items"] == [
+        [{"x-user-id": ["1"]}, 1.0]
+    ]
+
+    assert build_header_models(df) == {}
+
+
+def test_header_missing_values():
+    import pandas as pd
+    from traffic_model.headers import build_header_models
+
+    df = pd.DataFrame({
+        "method": ["GET", "GET"],
+        "endpoint": ["/api/items", "/api/items"],
+        "headers": [
+            {"x-user-id": ["1"]},
+            {},
+        ],
+    })
+
+    result = build_header_models(df, ["x-user-id"])
+
+    assert result["GET /api/items"] == [
+        [{"x-user-id": ["1"]}, 0.5],
+        [{}, 0.5],
+    ]

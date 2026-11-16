@@ -79,6 +79,7 @@ def test_markov_scripts_embed_model(tmp_path):
         "think_time_ms": THINK_TIMES,
         "path_params": PATH_PARAMS,
         "query_params": {},
+        "header_models": {},
         "bodies": BODIES,
         "correlation": {},
         "session": None,
