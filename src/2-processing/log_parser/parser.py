@@ -57,9 +57,11 @@ def parse_line(line):
     if "attributes" in entry:
         return parse_otel_record(entry)
 
-    # 3. Tiene que tener los campos obligatorios
+    # 3. Validar la presencia y el tipo de los campos obligatorios
     for field in REQUIRED:
-        if not entry.get(field):
+        value = entry.get(field)
+
+        if not isinstance(value, str) or not value.strip():
             return None
 
     # 4. Construimos la fila con los nombres de nuestras columnas
@@ -115,7 +117,15 @@ def parse_logs(log_file_path):
         return df
 
     # 3. Convertimos los tipos de datos.
-    df["timestamp"] = pd.to_datetime(df["timestamp"], format="ISO8601", utc=True)
+    df["timestamp"] = pd.to_datetime(
+        df["timestamp"],
+        format="ISO8601",
+        utc=True,
+        errors="coerce"
+    )
+
+    # Descartar las peticiones con timestamps inválidos
+    df = df.dropna(subset=["timestamp"])
     df["status"] = pd.to_numeric(df["status"], errors="coerce")
     df["duration_ms"] = pd.to_numeric(df["duration_ms"], errors="coerce")
     df["request_size_bytes"] = pd.to_numeric(df["request_size_bytes"], errors="coerce")

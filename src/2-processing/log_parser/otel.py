@@ -72,7 +72,11 @@ def parse_otel_record(record):
         or record.get("endpoint")
     )
 
-    if not method or not endpoint:
+    # Validar los campos obligatorios
+    if not isinstance(method, str) or not method.strip():
+        return None
+
+    if not isinstance(endpoint, str) or not endpoint.strip():
         return None
 
     row = {}
@@ -88,6 +92,11 @@ def parse_otel_record(record):
 
     # Ruta y parámetros de consulta
     path = attributes.get("url.path") or attributes.get("http.target") or endpoint
+
+    # Si la ruta no es válida, utilizar el endpoint
+    if not isinstance(path, str) or not path.strip():
+        path = endpoint
+
     query = attributes.get("url.query")
 
     # Compatibilidad con el formato antiguo de OpenTelemetry
@@ -158,7 +167,7 @@ def parse_otel_record(record):
                 row["timestamp"] = dt.isoformat()
                 if record.get("startTimeUnixNano") is not None:
                     row["timestamp_kind"] = "start"
-            except (ValueError, OverflowError):
+            except (ValueError, TypeError, OverflowError):
                 row["timestamp"] = None
                 row["timestamp_kind"] = "unknown"
 
@@ -172,11 +181,37 @@ def parse_otlp_export(record):
 
     rows = []
 
-    for resource in record.get("resourceSpans", []):
-        for scope in resource.get("scopeSpans", []):
-            for span in scope.get("spans", []):
+    resources = record.get("resourceSpans")
 
-                # Solo se procesan spans de servidor.
+    if not isinstance(resources, list):
+        return rows
+
+    for resource in resources:
+
+        if not isinstance(resource, dict):
+            continue
+
+        scopes = resource.get("scopeSpans")
+
+        if not isinstance(scopes, list):
+            continue
+
+        for scope in scopes:
+
+            if not isinstance(scope, dict):
+                continue
+
+            spans = scope.get("spans")
+
+            if not isinstance(spans, list):
+                continue
+
+            for span in spans:
+
+                if not isinstance(span, dict):
+                    continue
+
+                # Solo se procesan spans de servidor
                 if span.get("kind") not in (2, "SPAN_KIND_SERVER"):
                     continue
 

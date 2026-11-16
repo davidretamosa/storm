@@ -354,3 +354,138 @@ def test_missing_headers():
 
     assert normalize_headers(None) == {}
     assert normalize_headers({}) == {}
+
+def test_invalid_timestamps(tmp_path):
+    from log_parser.parser import parse_logs
+
+    path = tmp_path / "logs.jsonl"
+
+    path.write_text(
+        '{"timestamp":"2026-11-16T10:00:00Z",'
+        '"method":"GET","endpoint":"/api/tasks"}\n'
+        '{"timestamp":"invalid-date",'
+        '"method":"GET","endpoint":"/api/tasks"}\n'
+    )
+
+    df = parse_logs(path)
+
+    assert len(df) == 1
+    assert df["timestamp"].notna().all()
+
+
+def test_invalid_required_field_types(tmp_path):
+    import json
+    from log_parser.parser import parse_logs
+
+    valid = {
+        "timestamp": "2026-11-16T10:00:00Z",
+        "method": "GET",
+        "endpoint": "/api/tasks"
+    }
+
+    records = [
+        valid,
+        {**valid, "endpoint": 123},
+        {**valid, "endpoint": ["/api/tasks"]},
+        {**valid, "method": 42},
+        {**valid, "timestamp": {}},
+        {**valid, "endpoint": "   "}
+    ]
+
+    path = tmp_path / "logs.jsonl"
+    path.write_text(
+        "\n".join(json.dumps(r) for r in records)
+    )
+
+    df = parse_logs(path)
+
+    assert len(df) == 1
+    assert df.iloc[0]["endpoint"] == "/api/tasks"
+
+
+def test_invalid_otel_timestamp():
+    from log_parser.otel import parse_otel_record
+
+    record = {
+        "startTimeUnixNano": {"value": 123},
+        "attributes": {
+            "http.request.method": "GET",
+            "http.route": "/api/tasks"
+        }
+    }
+
+    assert parse_otel_record(record) is None
+
+
+def test_invalid_otel_field_types():
+    from log_parser.otel import parse_otel_record
+
+    record = {
+        "timestamp": "2026-11-16T10:00:00Z",
+        "attributes": {
+            "http.request.method": "GET",
+            "http.route": "/api/tasks"
+        }
+    }
+
+    for key, value in [
+        ("http.request.method", 42),
+        ("http.route", 123)
+    ]:
+        invalid = {
+            **record,
+            "attributes": {
+                **record["attributes"],
+                key: value
+            }
+        }
+
+        assert parse_otel_record(invalid) is None
+
+    invalid_path = {
+        **record,
+        "attributes": {
+            **record["attributes"],
+            "url.path": 123
+        }
+    }
+
+    row = parse_otel_record(invalid_path)
+
+    assert row["path"] == "/api/tasks"
+
+
+def test_malformed_otlp_structure():
+    from log_parser.otel import parse_otlp_export
+
+    valid_span = {
+        "kind": 2,
+        "startTimeUnixNano": "1794823200000000000",
+        "attributes": {
+            "http.request.method": "GET",
+            "http.route": "/api/tasks"
+        }
+    }
+
+    assert parse_otlp_export(
+        {"resourceSpans": None}
+    ) == []
+
+    record = {
+        "resourceSpans": [
+            None,
+            {"scopeSpans": None},
+            {
+                "scopeSpans": [
+                    None,
+                    {"spans": None},
+                    {"spans": [None, valid_span]}
+                ]
+            }
+        ]
+    }
+
+    rows = parse_otlp_export(record)
+
+    assert len(rows) == 1
+    assert rows[0]["endpoint"] == "/api/tasks"
