@@ -32,11 +32,12 @@ def test_markov_without_sessions():
     assert model["states"] == ["GET /a", "GET /b"]
 
     # Las transiciones son estimadas, no observadas.
+    # Se utiliza una probabilidad de END constante del 10%.
     for state in model["states"]:
         assert model["transitions"][state] == pytest.approx({
-            "GET /a": 0.6,
-            "GET /b": 0.2,
-            END: 0.2,
+            "GET /a": 0.675,
+            "GET /b": 0.225,
+            END: 0.1,
         })
 
 def test_model_has_start_and_end(log_file):
@@ -346,3 +347,132 @@ def test_body_correlation_with_categories():
             "categoryId": "/api/categories"
         }
     }
+
+
+def test_markov_partial_sessions():
+    import pandas as pd
+    from traffic_model.markov import build_markov_model
+
+    df = pd.DataFrame({
+        "timestamp": pd.date_range(
+            "2026-11-16", periods=6, freq="s"
+        ),
+        "method": [
+            "GET", "GET", "POST", "GET", "GET", "GET"
+        ],
+        "endpoint": [
+            "/api/tasks",
+            "/api/products",
+            "/api/tasks",
+            "/api/customers",
+            "/api/categories",
+            "/api/tasks"
+        ],
+        "session_id": [
+            "s1", None, "s1", None, "s2", "s2"
+        ]
+    })
+
+    model = build_markov_model(df)
+
+    assert set(model["states"]) == {
+        "GET /api/tasks",
+        "POST /api/tasks",
+        "GET /api/products",
+        "GET /api/customers",
+        "GET /api/categories"
+    }
+
+    assert model["transitions"]["GET /api/products"] == {
+        "END": 1.0
+    }
+
+    assert model["transitions"]["GET /api/customers"] == {
+        "END": 1.0
+    }
+
+    assert model["transitions"]["GET /api/tasks"] == {
+        "POST /api/tasks": 0.5,
+        "END": 0.5
+    }
+
+    assert model["start"] == {
+        "GET /api/tasks": 0.25,
+        "GET /api/categories": 0.25,
+        "GET /api/products": 0.25,
+        "GET /api/customers": 0.25
+    }
+
+def test_status_transitions_min_probability():
+    import pandas as pd
+    from traffic_model.markov import build_markov_model
+
+    records = []
+
+    for i in range(10):
+        for second, endpoint in [
+            (0, "/api/a"),
+            (1, "/api/b" if i < 9 else "/api/c")
+        ]:
+            records.append({
+                "timestamp": pd.Timestamp("2026-11-16")
+                             + pd.Timedelta(seconds=second),
+                "method": "GET",
+                "endpoint": endpoint,
+                "session_id": f"s{i}",
+                "status": 200
+            })
+
+    df = pd.DataFrame(records)
+
+    model = build_markov_model(df, min_probability=0.2)
+
+    assert model["transitions"]["GET /api/a"] == {
+        "GET /api/b": 1.0
+    }
+
+    assert model["status_transitions"]["GET /api/a"]["200"] == {
+        "GET /api/b": 1.0
+    }
+
+    # Sin umbral se conservan las probabilidades originales
+    model = build_markov_model(df, min_probability=0.0)
+
+    assert model["status_transitions"]["GET /api/a"]["200"] == {
+        "GET /api/b": 0.9,
+        "GET /api/c": 0.1
+    }
+
+def test_markov_end_probability_without_sessions():
+    import math
+    import pandas as pd
+    from traffic_model.markov import build_markov_model
+
+    for n in [10, 50, 100, 500, 1000, 10000]:
+
+        df = pd.DataFrame({
+            "timestamp": pd.date_range(
+                "2026-11-16", periods=n, freq="s"
+            ),
+            "method": ["GET"] * n,
+            "endpoint": ["/api/a", "/api/b"] * (n // 2),
+            "session_id": [None] * n
+        })
+
+        model = build_markov_model(df)
+
+        for probabilities in model["transitions"].values():
+
+            assert math.isclose(probabilities["END"], 0.1)
+
+            assert math.isclose(
+                probabilities["GET /api/a"], 0.45
+            )
+
+            assert math.isclose(
+                probabilities["GET /api/b"], 0.45
+            )
+
+            assert math.isclose(
+                sum(probabilities.values()), 1.0
+            )
