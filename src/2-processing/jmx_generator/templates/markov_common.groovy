@@ -227,22 +227,41 @@ def rememberCreatedId = { String state, def result ->
             result.getResponseDataAsString()
         )
 
-        if (response instanceof Map && response.id != null) {
+        if (!(response instanceof Map)) {
+            return
+        }
+
+        // Obtener el ID: primero probar "id" y después campos como
+        // "event_id", "venue_id" o "category_id".
+        def createdId = response.id
+
+        if (createdId == null) {
+            def idEntry = response.find { key, value ->
+                key.toString().endsWith("_id") && value != null
+            }
+
+            createdId = idEntry?.value
+        }
+
+        if (createdId != null) {
             def ids = vars.getObject("stormIds") ?: [:]
-            ids[resource] = response.id
+            ids[resource] = createdId
             vars.putObject("stormIds", ids)
 
             // Registrar el recurso como disponible
-            def id = String.valueOf(response.id)
+            def id = String.valueOf(createdId)
 
             deletedIds[resource]?.remove(id)
 
             availableIds.computeIfAbsent(resource) {
                 java.util.concurrent.ConcurrentHashMap.newKeySet()
             }.add(id)
+
+            log.info("STORM: ID registrado para " + resource + ": " + id)
         }
-    } catch (Exception ignored) {
-        // Respuesta vacía o que no es JSON
+
+    } catch (Exception e) {
+        log.warn("STORM: No se pudo registrar el ID de " + state + ": " + e)
     }
 }
 

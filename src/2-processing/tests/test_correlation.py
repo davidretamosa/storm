@@ -96,3 +96,169 @@ def test_build_correlation_with_deletes():
             "param": "id",
         },
     }
+
+
+
+def test_resource_of_param_with_verb_based_routes():
+    resources = {
+        "/api/events/addevent",
+        "/api/venue/createvenue",
+        "/api/category/createcategory",
+    }
+
+    assert resource_of_param(
+        "/api/events/getevent/{event_id}",
+        "event_id",
+        resources,
+    ) == "/api/events/addevent"
+
+    assert resource_of_param(
+        "/api/events/getevent/{eventId}",
+        "eventId",
+        resources,
+    ) == "/api/events/addevent"
+
+    assert resource_of_param(
+        "/api/venue/getvenue/{venue_id}",
+        "venue_id",
+        resources,
+    ) == "/api/venue/createvenue"
+
+    assert resource_of_param(
+        "/api/category/getcategory/{category_id}",
+        "category_id",
+        resources,
+    ) == "/api/category/createcategory"
+
+
+def test_resource_of_param_with_generic_id():
+    resources = {
+        "/api/events/addevent",
+        "/api/venue/createvenue",
+        "/api/category/createcategory",
+    }
+
+    assert resource_of_param(
+        "/api/events/getevent/{id}",
+        "id",
+        resources,
+    ) == "/api/events/addevent"
+
+    assert resource_of_param(
+        "/api/venue/getvenue/{id}",
+        "id",
+        resources,
+    ) == "/api/venue/createvenue"
+
+
+def test_build_correlation_with_verb_based_routes():
+    model = {
+        "states": [
+            "POST /api/events/addevent",
+            "GET /api/events/getevent/{event_id}",
+            "GET /api/events/getevent/{eventId}",
+            "DELETE /api/events/deleteevent/{event_id}",
+            "POST /api/venue/createvenue",
+            "GET /api/venue/getvenue/{venue_id}",
+            "POST /api/category/createcategory",
+            "GET /api/category/getcategory/{category_id}",
+        ]
+    }
+
+    correlation = build_correlation(model, {})
+
+    assert correlation["path_resources"] == {
+        "GET /api/events/getevent/{event_id}": {
+            "event_id": "/api/events/addevent"
+        },
+        "GET /api/events/getevent/{eventId}": {
+            "eventId": "/api/events/addevent"
+        },
+        "DELETE /api/events/deleteevent/{event_id}": {
+            "event_id": "/api/events/addevent"
+        },
+        "GET /api/venue/getvenue/{venue_id}": {
+            "venue_id": "/api/venue/createvenue"
+        },
+        "GET /api/category/getcategory/{category_id}": {
+            "category_id": "/api/category/createcategory"
+        },
+    }
+
+    assert correlation["deletes"] == {
+        "DELETE /api/events/deleteevent/{event_id}": {
+            "resource": "/api/events/addevent",
+            "param": "event_id",
+        }
+    }
+
+
+def test_resource_of_param_does_not_guess_ambiguous_resources():
+    resources = {
+        "/api/events/addevent",
+        "/api/events/addother",
+    }
+
+    assert resource_of_param(
+        "/api/events/getsomething/{id}",
+        "id",
+        resources,
+    ) is None
+
+def test_created_resource_with_parent_id():
+    # Crea un recurso aunque la ruta también reciba un ID.
+    assert created_resource(
+        "POST /api/attendees/addattendee/{eventId}"
+    ) == "/api/attendees/addattendee"
+
+    # No debe confundir operaciones con creaciones.
+    assert created_resource(
+        "POST /api/accounts/{id}/deposit"
+    ) is None
+
+    # Tampoco debe confundir rutas cuyo nombre no coincide.
+    assert created_resource(
+        "POST /api/events/addattendee/{eventId}"
+    ) is None
+
+
+def test_build_correlation_with_attendee_creation():
+    model = {
+        "states": [
+            "POST /api/events/addevent",
+            "POST /api/attendees/addattendee/{eventId}",
+            "GET /api/events/getevent/{id}",
+            "GET /api/attendees/getattendee/{id}",
+            "DELETE /api/attendees/deleteattendee/{id}",
+        ]
+    }
+
+    correlation = build_correlation(model, {})
+
+    assert correlation["creates"] == {
+        "POST /api/events/addevent": "/api/events/addevent",
+        "POST /api/attendees/addattendee/{eventId}":
+            "/api/attendees/addattendee",
+    }
+
+    assert correlation["path_resources"] == {
+        "POST /api/attendees/addattendee/{eventId}": {
+            "eventId": "/api/events/addevent"
+        },
+        "GET /api/events/getevent/{id}": {
+            "id": "/api/events/addevent"
+        },
+        "GET /api/attendees/getattendee/{id}": {
+            "id": "/api/attendees/addattendee"
+        },
+        "DELETE /api/attendees/deleteattendee/{id}": {
+            "id": "/api/attendees/addattendee"
+        },
+    }
+
+    assert correlation["deletes"] == {
+        "DELETE /api/attendees/deleteattendee/{id}": {
+            "resource": "/api/attendees/addattendee",
+            "param": "id",
+        }
+    }
