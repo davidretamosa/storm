@@ -54,6 +54,8 @@ def main() -> None:
         default="",
         help="Cabeceras HTTP permitidas, separadas por comas"
     )
+    args.add_argument("--realistic-bodies", action="store_true",
+                      help="cuerpos JSON realistas (capa de IA): el modelo de los bodies sale solo de las peticiones 2xx")
     opts = args.parse_args()
 
     if not opts.logs and not opts.jar:
@@ -107,7 +109,7 @@ def main() -> None:
         allowed_headers
     )
     print(f"{len(header_models)} peticiones con cabeceras HTTP.")
-    bodies = build_body_models(df_logs, endpoints)
+    bodies = build_body_models(df_logs, endpoints, only_2xx=opts.realistic_bodies)
     profile = predict_traffic_scale(df_logs)
     correlation = build_correlation(model, bodies)
     print(f"{len(model['states'])} estados en la cadena de Markov; {profile['vusers']} usuarios virtuales.")
