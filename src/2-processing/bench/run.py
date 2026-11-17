@@ -74,7 +74,7 @@ def instrument(plan, output):
     thread_group = root.find(".//ThreadGroup")
     children = jmx.child_tree(root, thread_group)
     manager = ET.Element("HeaderManager", {"guiclass": "HeaderPanel", "testclass": "HeaderManager",
-                                            "testname": "STORM-IA banc: sessió"})
+                                            "testname": "Banc STORM: sessió"})
     headers = ET.SubElement(manager, "collectionProp", {"name": "HeaderManager.headers"})
     header = ET.SubElement(headers, "elementProp", {"name": "", "elementType": "Header"})
     header.append(jmx.string_prop("Header.name", BENCH_HEADER))
@@ -224,7 +224,8 @@ def main(argv=None):
         instrument(plans[label], bench_plans[label])
         options[label] = plan_options(args)
 
-    jar = opts.bankapp_jar
+    # absolut: la bankapp s'engega amb el directori de treball a la seva carpeta de resultats
+    jar = Path(opts.bankapp_jar).resolve() if opts.bankapp_jar else None
     if opts.acceptance and not jar:
         if not opts.bankapp_build:
             parser.error("--acceptance necessita --bankapp-jar o --bankapp-build")

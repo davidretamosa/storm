@@ -13,8 +13,9 @@ import pytest
 from bench import jmeter, jmx
 from bench.bankapp import free_port
 from bench.echo_server import BENCH_HEADER
-from bench.run import generate_plan, instrument, plan_options, session_requests
-from bench.tests.support import INPUTS, LOG, ROOT, sha256
+from bench.run import _wait_for_port, generate_plan, instrument, plan_options, session_requests
+from bench.tests.support import INPUTS, LOG, ROOT
+from bench.tests.test_negatiu import EXPECTED
 from log_parser.parser import parse_logs
 
 from bench import metrics
@@ -137,11 +138,12 @@ def test_echo_server_log_is_readable_by_parse_logs(tmp_path):
     assert list(df["timestamp_kind"]) == ["start", "start"]
 
 
-def test_generate_plan_is_main_py_without_flags(reference_plans, tmp_path):
-    """El banc fa el pla amb main.py: amb els mateixos arguments, el mateix .jmx que la prova en negatiu."""
+def test_generate_plan_is_main_py_without_flags(tmp_path):
+    """El banc fa el pla amb main.py i fixa ell mateix la llavor (la de fora la treu el conftest): amb els
+    mateixos arguments, el hash fixat de la prova en negatiu."""
     args = INPUTS["logs+jar+session"]
     result = generate_plan(args, tmp_path / "pla_A.jmx")
-    assert result["sha256"] == sha256(reference_plans["logs+jar+session"])
+    assert result["sha256"] == EXPECTED["logs+jar+session"]
     assert result["command"].startswith("PYTHONHASHSEED=0 python main.py --logs ")
 
 
@@ -150,7 +152,7 @@ def test_instrument_only_adds_the_bench_header(reference_plans, tmp_path):
     bench = tmp_path / "banc.jmx"
     instrument(plan, bench)
     root = jmx.read(bench).getroot()
-    managers = [m for m in root.iter("HeaderManager") if m.get("testname") == "STORM-IA banc: sessió"]
+    managers = [m for m in root.iter("HeaderManager") if m.get("testname") == "Banc STORM: sessió"]
     assert len(managers) == 1
     thread_tree = jmx.child_tree(root, root.find(".//ThreadGroup"))
     first, second = list(thread_tree)[:2]
@@ -170,7 +172,7 @@ def test_real_jmeter_accepts_the_instrumented_plan(reference_plans, tmp_path):
                                "--port", str(port), "--logs", LOG], cwd=ROOT,
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
-        time.sleep(1.5)
+        _wait_for_port(port, server)
         code, output = jmeter.run(bench, tmp_path / "r.jtl", tmp_path / "j.log",
                                   {"host": "127.0.0.1", "port": port, "duration": 4, "rampup": 1, "vusers": 2})
     finally:
