@@ -9,7 +9,11 @@ import pytest
 
 from bench.tests.support import INPUTS, generate, sha256
 from log_parser.parser import parse_logs
+from traffic_model.habitual import (
+    concurrency_curve, error_rates, reference_durations, side_file_path, write_side_file,
+)
 from traffic_model.payloads import build_path_params
+from traffic_model.session import remove_session_requests
 from traffic_model.status_filter import successful_rows
 from traffic_model.think_time import build_think_times
 
@@ -17,6 +21,7 @@ from traffic_model.think_time import build_think_times
 ROOT = Path(__file__).resolve().parents[1]
 SAMPLE_LOG = ROOT / "samples" / "access_sample.log"
 BANKAPP_LOG = ROOT.parent / "1-input" / "java-app-mock" / "logs" / "bankapp.jsonl"
+REFERENCE_LOG = ROOT / "bench" / "data" / "bankapp_vall_pic_3h.jsonl"
 
 # Instante de referencia de las tablas sintéticas: "second" cuenta los segundos desde aquí
 ORIGIN = pd.Timestamp("2026-01-01T00:00:00Z")
@@ -371,3 +376,202 @@ def test_flag_without_logs_changes_nothing(tmp_path):
     plain = generate(INPUTS["jar"], tmp_path / "sin.jmx")
     habitual = generate(INPUTS["jar"] + ["--habitual-traffic"], tmp_path / "con.jmx")
     assert sha256(plain) == sha256(habitual)
+
+
+# --- T-1.3: <plan>.jmx.ai.json (duraciones, errores y la curva horaria) ---
+
+def durations_table(values, method="GET", endpoint="/a"):
+    """Tabla sintética de una sola petición con estas duraciones (ms); un None queda como NaN."""
+    df = pd.DataFrame({"method": method, "endpoint": endpoint, "duration_ms": values})
+    df["duration_ms"] = pd.to_numeric(df["duration_ms"], errors="coerce")
+    return df
+
+
+def sessions_table(rows):
+    """Tabla sintética de peticiones: cada fila es (session_id, second), con second desde ORIGIN."""
+    return pd.DataFrame({
+        "session_id": [session for session, _ in rows],
+        "timestamp": [ORIGIN + pd.Timedelta(seconds=second) for _, second in rows],
+        "method": "GET",
+        "endpoint": "/a",
+    })
+
+
+def test_reference_durations_by_hand():
+    df = durations_table(list(range(1, 21)))
+    assert reference_durations(df) == {"GET /a": {"requests": 20, "p50_ms": 10.5, "p95_ms": pytest.approx(19.05)}}
+
+
+def test_reference_durations_skip_unknown_and_negative():
+    # Una duración desconocida no se sabe; una negativa es un error del log: ninguna de las dos cuenta
+    result = reference_durations(durations_table([10, None, -5, 30]))["GET /a"]
+    assert result["requests"] == 2
+    assert result["p50_ms"] == pytest.approx(20.0)
+
+
+def test_reference_durations_zero_counts_with_three_decimals():
+    # Una duración de 0 ms es válida (>= 0); el p50 de [0, 1.234] lleva 3 decimales
+    result = reference_durations(durations_table([0, 1.234]))["GET /a"]
+    assert result["requests"] == 2
+    assert result["p50_ms"] == pytest.approx(0.617)
+
+
+def test_reference_durations_without_durations():
+    # Control negativo: sin la columna, o con la columna vacía, no hay tabla
+    without_column = pd.DataFrame({"method": ["GET"], "endpoint": ["/a"]})
+    assert reference_durations(without_column) == {}
+    assert reference_durations(durations_table([None, None])) == {}
+    assert reference_durations(None) == {}
+
+
+def test_error_rates_by_hand():
+    df = requests_table([("GET", "/a", "/a", s) for s in [200] * 7 + [404] * 2 + [503, None]])
+    result = error_rates(df)["GET /a"]
+    assert result["requests"] == 10
+    assert result["4xx"] == pytest.approx(0.2)
+    assert result["5xx"] == pytest.approx(0.1)
+
+
+def test_error_rates_without_status():
+    without_column = pd.DataFrame({"method": ["GET"], "endpoint": ["/a"]})
+    assert error_rates(without_column) == {}
+    assert error_rates(requests_table([("GET", "/a", "/a", None)])) == {}
+    assert error_rates(None) == {}
+
+
+def test_curve_valley_peak_valley():
+    # Una sesión todo el rato y dos más en el tercio del medio: valle, pico, valle.
+    # Las líneas sin sesión de antes no cuentan: la curva empieza en la primera sesión
+    df = sessions_table([(None, -600), ("", -300), ("a", 0), ("a", 1800),
+                         ("b", 600), ("b", 1200), ("c", 600), ("c", 1200)])
+    curve = concurrency_curve(df)
+    assert curve["values"] == pytest.approx([1 / 3, 1.0, 1 / 3], abs=1e-4)
+    assert curve["slice_seconds"] == pytest.approx(600)
+    assert curve["start"] == ORIGIN.isoformat()
+
+
+@pytest.mark.parametrize("seconds, slices", [(599, 1), (601, 2), (3601, 7)])
+def test_curve_last_slice_is_not_a_residue(seconds, slices):
+    # Las franjas se reajustan para cubrir el log justo: la última no es un trozo casi vacío
+    curve = concurrency_curve(sessions_table([("a", 0), ("a", seconds)]))
+    assert len(curve["values"]) == slices
+    assert curve["values"] == pytest.approx([1.0] * slices)
+    assert curve["slice_seconds"] == pytest.approx(seconds / slices)
+
+
+def test_curve_long_log_widens_the_slices():
+    # 3 días de log son más de 288 franjas de 10 min: las franjas se ensanchan
+    curve = concurrency_curve(sessions_table([("a", 0), ("a", 3 * 24 * 3600)]))
+    assert len(curve["values"]) == 288
+    assert curve["slice_seconds"] == pytest.approx(3 * 24 * 3600 / 288)
+
+
+def test_curve_empty_session_does_not_count():
+    # La pseudosesión "" (login y logout sin sesión) estaría abierta de la primera línea a la última:
+    # si contara, la segunda franja valdría ~0.5
+    df = sessions_table([("a", 0), ("a", 600), ("b", 1199), ("b", 1200), ("", 0), ("", 1200)])
+    values = concurrency_curve(df)["values"]
+    assert len(values) == 2
+    assert values[0] == 1.0
+    assert values[1] < 0.01
+
+
+def test_no_sessions_no_curve():
+    # El modo sin sesiones: sin sesiones no hay curva
+    without_column = pd.DataFrame({"timestamp": [ORIGIN, ORIGIN + pd.Timedelta(seconds=60)]})
+    assert concurrency_curve(without_column) is None
+    assert concurrency_curve(sessions_table([(None, 0), (None, 60)])) is None
+    assert concurrency_curve(sessions_table([("", 0), ("", 60)])) is None
+    assert concurrency_curve(None) is None
+
+
+def test_curve_of_the_reference_log():
+    # Control positivo: el log de referencia tiene valle, pico y valle de una hora cada uno
+    df, _ = remove_session_requests(parse_logs(REFERENCE_LOG), None, "/api/sessions")
+    curve = concurrency_curve(df)
+    values = curve["values"]
+    assert len(values) == 18
+    assert curve["slice_seconds"] == pytest.approx(599.3, abs=0.05)
+    assert all(v >= 0.9 for v in values[6:12])
+    assert all(v <= 0.36 for v in values[:6] + values[12:])
+    assert max(values) == 1.0
+    # La hora de la primera sesión (sin las peticiones de sesión)
+    assert curve["start"] == "2026-10-28T19:23:58.601296+00:00"
+
+
+def test_the_sample_log_figures():
+    # Las cifras del log de ejemplo (tabla del punto 3 del encargo)
+    df = parse_logs(SAMPLE_LOG)
+    withdraw = error_rates(df)["POST /api/accounts/{id}/withdraw"]
+    assert withdraw["requests"] == 9
+    assert withdraw["4xx"] == pytest.approx(0.3333)
+    curve = concurrency_curve(df)
+    assert curve["slice_seconds"] == pytest.approx(561.6, abs=0.05)
+    assert curve["values"] == pytest.approx([0.5008, 0.386, 1.0, 0.854])
+
+
+def test_side_file_path():
+    assert side_file_path("output/plan.jmx") == Path("output/plan.jmx.ai.json")
+
+
+def test_side_file_with_the_flag(tmp_path):
+    plan = generate(INPUTS["bankapp+session"] + ["--habitual-traffic"], tmp_path / "plan.jmx")
+    content = json.loads(side_file_path(plan).read_text(encoding="utf-8"))
+    assert list(content) == ["flag", "curve_property", "curve", "reference_durations", "error_rates"]
+    assert content["flag"] == "--habitual-traffic"
+    assert content["curve_property"] == "-Jcurva_horaria=1"
+    assert len(content["curve"]["values"]) == 51
+    assert content["curve"]["slice_seconds"] == pytest.approx(590.5, abs=0.05)
+    assert content["curve"]["values"][0] == 1.0
+    assert content["error_rates"]["POST /api/transfers"] == {
+        "requests": 29, "4xx": pytest.approx(0.0345), "5xx": 0.0}
+    assert content["reference_durations"]["GET /api/accounts/{id}"] == {
+        "requests": 187, "p50_ms": pytest.approx(59.0), "p95_ms": pytest.approx(115.7)}
+    # Duraciones y errores salen del log entero leído, también de las peticiones de sesión
+    assert "POST /api/sessions" in content["reference_durations"]
+    assert "POST /api/sessions" in content["error_rates"]
+
+
+def test_curve_comes_from_the_log_without_session_requests(tmp_path):
+    # El DELETE de sesión de "b" lleva su sessionId y la alargaría hasta el final: sin él, "b" dura 1 s
+    line = ('{{"timestamp":"2026-01-01T00:{minute}:00Z","sessionId":"{session}","userId":1,"method":"{method}",'
+            '"endpoint":"{endpoint}","path":"{path}","status":200,"durationMs":5}}')
+    rows = [("00", "a", "GET", "/api/x", "/api/x"), ("00", "b", "GET", "/api/x", "/api/x"),
+            ("10", "a", "GET", "/api/x", "/api/x"), ("20", "a", "GET", "/api/x", "/api/x"),
+            ("20", "b", "DELETE", "/api/sessions/{id}", "/api/sessions/b")]
+    log = tmp_path / "log.jsonl"
+    log.write_text("\n".join(
+        line.format(minute=m, session=s, method=me, endpoint=e, path=pa) for m, s, me, e, pa in rows) + "\n",
+        encoding="utf-8")
+    plan = generate(["--logs", str(log), "--session", "--habitual-traffic"], tmp_path / "plan.jmx")
+    content = json.loads(side_file_path(plan).read_text(encoding="utf-8"))
+    assert content["curve"]["values"] == pytest.approx([1.0, 0.9983])
+    # las duraciones sí salen del log entero, con el DELETE de sesión
+    assert "DELETE /api/sessions/{id}" in content["reference_durations"]
+
+
+def test_side_file_without_logs(tmp_path):
+    plan = generate(INPUTS["jar"] + ["--habitual-traffic"], tmp_path / "plan.jmx")
+    content = json.loads(side_file_path(plan).read_text(encoding="utf-8"))
+    assert content["curve"] is None
+    assert content["curve_property"] is None
+    assert content["reference_durations"] == {}
+    assert content["error_rates"] == {}
+
+
+@pytest.mark.parametrize("name", list(INPUTS))
+def test_no_side_file_without_the_flag(tmp_path, name):
+    # Control negativo: sin el flag no se escribe ningún .ai.json
+    folder = tmp_path / "sin"
+    generate(INPUTS[name], folder / "plan.jmx")
+    assert list(folder.rglob("*.ai.json")) == []
+    assert (folder / "plan.jmx").exists()
+
+
+def test_write_side_file_writes_utf8_json(tmp_path):
+    # Sin curva: curve y curve_property a null; el JSON termina en salto de línea
+    path = write_side_file(tmp_path / "p.jmx", None, None)
+    text = path.read_text(encoding="utf-8")
+    assert path == tmp_path / "p.jmx.ai.json"
+    assert text.endswith("}\n")
+    assert json.loads(text)["curve_property"] is None

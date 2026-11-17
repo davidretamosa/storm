@@ -14,6 +14,7 @@ from jar_parser.parser import compare_with_logs, parse_jar
 from jmx_generator.generator import generate_jmx
 from log_parser.parser import parse_logs
 from traffic_model.correlation import build_correlation
+from traffic_model.habitual import concurrency_curve, write_side_file
 from traffic_model.markov import build_markov_model
 from traffic_model.payloads import build_body_models, build_path_params, build_query_params
 from traffic_model.scaling import predict_traffic_scale
@@ -55,7 +56,8 @@ def main() -> None:
         help="Cabeceras HTTP permitidas, separadas por comas"
     )
     args.add_argument("--habitual-traffic", action="store_true",
-                      help="tráfico habitual (capa de IA): los {id} de las rutas se aprenden solo de las respuestas 2xx")
+                      help="tráfico habitual (capa de IA): los {id} de las rutas se aprenden solo de las respuestas 2xx, "
+                           "y se escribe <plan>.jmx.ai.json (duraciones p50/p95, errores 4xx/5xx y curva horaria)")
     opts = args.parse_args()
 
     if not opts.logs and not opts.jar:
@@ -82,6 +84,8 @@ def main() -> None:
         for request in coverage["unknown"]:
             print(f"  - En los logs pero no en el .jar: {request}")
 
+    # El log tal como se ha leído, con las peticiones de sesión: duraciones y errores de --habitual-traffic
+    df_read = df_logs
     # Si la app pide iniciar sesión, JMeter lo hará al principio de cada sesión:
     # las peticiones de sesión no forman parte del modelo
     session = None
@@ -111,6 +115,7 @@ def main() -> None:
     print(f"{len(header_models)} peticiones con cabeceras HTTP.")
     bodies = build_body_models(df_logs, endpoints)
     profile = predict_traffic_scale(df_logs)
+    curve = concurrency_curve(df_logs) if opts.habitual_traffic else None
     correlation = build_correlation(model, bodies)
     print(f"{len(model['states'])} estados en la cadena de Markov; {profile['vusers']} usuarios virtuales.")
     print(f"{len(path_params)} peticiones con parámetros de ruta; "
@@ -126,6 +131,9 @@ def main() -> None:
         header_models=header_models,
     )
     print(f"Plan generado: {opts.output}")
+    if opts.habitual_traffic:
+        side_file = write_side_file(opts.output, df_read, curve)
+        print(f"Tráfico habitual: {side_file}")
 
 
 if __name__ == "__main__":
