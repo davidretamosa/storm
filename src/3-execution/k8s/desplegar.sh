@@ -96,7 +96,7 @@ echo "Laboratorio listo:"
 echo "  App de prueba: http://localhost:${PUERTO}0080/hello"
 echo "  Grafana:       http://localhost:${PUERTO}0000/d/lab-jmeter-k8s  (admin / admin)"
 echo "  Prometheus:    http://localhost:${PUERTO}0090"
-echo "  Parada:        http://localhost:${PUERTO}0086/estado  (POST /parar)
+echo "  Parada:        http://localhost:${PUERTO}0082/estado  (POST /parar)"
 if kubectl -n "$NS" get deploy objetivo >/dev/null 2>&1; then
   echo "  App objetivo:  http://localhost:${PUERTO}0081  ($(kubectl -n "$NS" get deploy objetivo -o jsonpath='{.spec.template.spec.containers[0].image}'))"
 else
