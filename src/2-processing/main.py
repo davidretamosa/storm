@@ -10,10 +10,11 @@ import argparse
 
 import numpy as np
 
-from jar_parser.parser import compare_with_logs, parse_jar
+from jar_parser.parser import compare_with_logs, parse_jar, read_jar_classes
 from jmx_generator.generator import generate_jmx
 from log_parser.parser import parse_logs
 from traffic_model.correlation import build_correlation
+from traffic_model.dto_bodies import add_dto_bodies
 from traffic_model.markov import build_markov_model
 from traffic_model.payloads import build_body_models, build_path_params, build_query_params
 from traffic_model.scaling import predict_traffic_scale
@@ -55,7 +56,8 @@ def main() -> None:
         help="Cabeceras HTTP permitidas, separadas por comas"
     )
     args.add_argument("--realistic-bodies", action="store_true",
-                      help="cuerpos JSON realistas (capa de IA): el modelo de los bodies sale solo de las peticiones 2xx")
+                      help="cuerpos JSON realistas (capa de IA): el modelo de los bodies sale solo de las peticiones 2xx; "
+                           "con --jar, las peticiones sin campos en los logs salen del DTO")
     opts = args.parse_args()
 
     if not opts.logs and not opts.jar:
@@ -110,6 +112,10 @@ def main() -> None:
     )
     print(f"{len(header_models)} peticiones con cabeceras HTTP.")
     bodies = build_body_models(df_logs, endpoints, only_2xx=opts.realistic_bodies)
+    dto_unique = {}
+    if opts.realistic_bodies and opts.jar:
+        replaced, dto_unique = add_dto_bodies(bodies, df_logs, endpoints, read_jar_classes(opts.jar))
+        print(f"Bodies realistas: {len(replaced)} peticiones con el body del DTO del .jar.")
     profile = predict_traffic_scale(df_logs)
     correlation = build_correlation(model, bodies)
     print(f"{len(model['states'])} estados en la cadena de Markov; {profile['vusers']} usuarios virtuales.")

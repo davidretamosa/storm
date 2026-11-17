@@ -51,7 +51,7 @@ class Reader:
 
 
 def read_constant_pool(reader):
-    """Lista con los textos (Utf8), enteros (Integer) y clases (Class) de la clase.
+    """Lista con los textos (Utf8), números (Integer, Float, Long, Double) y clases (Class) de la clase.
 
     El resto de tipos de entrada se saltan (no los necesitamos), pero hay que leerlos
     para saber dónde empieza la siguiente.
@@ -67,9 +67,12 @@ def read_constant_pool(reader):
         elif tag == 3:                    # Integer
             pool[i] = struct.unpack(">i", reader.bytes(4))[0]
         elif tag == 4:                    # Float
-            reader.bytes(4)
-        elif tag in (5, 6):               # Long, Double: ocupan dos posiciones
-            reader.bytes(8)
+            pool[i] = struct.unpack(">f", reader.bytes(4))[0]
+        elif tag == 5:                    # Long: ocupa dos posiciones
+            pool[i] = struct.unpack(">q", reader.bytes(8))[0]
+            i += 1
+        elif tag == 6:                    # Double: ocupa dos posiciones
+            pool[i] = struct.unpack(">d", reader.bytes(8))[0]
             i += 1
         elif tag == 7:                    # Class: posición del texto con su nombre
             pool[i] = ("class", reader.u2())
@@ -117,9 +120,8 @@ def read_element_value(reader, pool):
         return pool[reader.u2()]
     if tag in "BCISZ":                    # entero / booleano
         return pool[reader.u2()]
-    if tag in "DFJ":                      # double / float / long (no los necesitamos)
-        reader.u2()
-        return None
+    if tag in "DFJ":                      # double / float / long, p. ej. el 2 de @Min(2)
+        return pool[reader.u2()]
     if tag == "e":                        # enum, p. ej. RequestMethod.GET -> "GET"
         reader.u2()                       # tipo del enum
         return pool[reader.u2()]
@@ -169,7 +171,8 @@ def read_class(data):
     {
       "name": "com.pae.bankapp.controller.AccountController",
       "annotations": [{"type": ..., "values": {...}}, ...],
-      "fields":  [{"name": "amount", "type": "java.math.BigDecimal", "static": False}, ...],
+      "fields":  [{"name": "amount", "type": "java.math.BigDecimal", "static": False,
+                   "annotations": [...]}, ...],
       "methods": [{"name": "deposit", "params": ["java.lang.Long", "com.pae...DepositRequest"],
                    "annotations": [...], "param_annotations": [[...], [...]]}, ...],
     }
@@ -193,8 +196,9 @@ def read_class(data):
         access = reader.u2()
         field_name = pool[reader.u2()]
         field_type = descriptor_to_type(pool[reader.u2()])
-        read_attributes(reader, pool)
-        fields.append({"name": field_name, "type": field_type, "static": bool(access & ACC_STATIC)})
+        attributes = read_attributes(reader, pool)
+        fields.append({"name": field_name, "type": field_type, "static": bool(access & ACC_STATIC),
+                       "annotations": attributes["annotations"]})
 
     methods = []
     for _ in range(reader.u2()):
