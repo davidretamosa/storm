@@ -44,21 +44,20 @@ roleRef:
   kind: Role
   name: parada
 ---
-# NodePort accesible desde el equipo (30082; en kind, 40082).
-# Desde dentro del clúster: http://parada:8080/parar.
+# Solo accesible dentro del clúster; Grafana lo llama a través de su proxy interno.
+# Para probarlo directamente: kubectl -n lab-jmeter port-forward svc/parada 8081:8080
 apiVersion: v1
 kind: Service
 metadata:
   name: parada
   namespace: lab-jmeter
 spec:
-  type: NodePort
+  type: ClusterIP
   selector:
     app: parada
   ports:
     - port: 8080
       targetPort: 8080
-      nodePort: 30082
 ---
 apiVersion: apps/v1
 kind: Deployment

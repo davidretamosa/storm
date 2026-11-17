@@ -72,18 +72,24 @@ configmap jmeter-plan --from-file=plan.jmx="$LAB/jmeter/plan.jmx"
 configmap jmeter-escenarios --from-file=escenarios/
 configmap jmeter-scripts --from-file=ejecutar-y-evaluar.sh --from-file=backend-listener.xml
 configmap grafana-datasources --from-file="$LAB/grafana/provisioning/datasources/datasources.yml"
+DASHBOARD_TMP=$(mktemp)
+trap 'rm -f "$DASHBOARD_TMP"' 0
+sed -e "s|http://localhost:30000/parada/parar|http://localhost:${PUERTO}0000/parada/parar|" \
+  grafana/lab-jmeter-k8s.json > "$DASHBOARD_TMP"
 configmap grafana-dashboards \
   --from-file="$LAB/grafana/provisioning/dashboards/dashboards.yml" \
-  --from-file=grafana/lab-jmeter-k8s.json
+  --from-file=lab-jmeter-k8s.json="$DASHBOARD_TMP"
+configmap grafana-proxy --from-file=default.conf=grafana/nginx.conf
 
 echo "3/4 Desplegando discos, app, InfluxDB, Prometheus y Grafana..."
 kubectl apply -f almacenamiento.yaml
 aplicar app.yaml
+# Crea el Service ClusterIP antes de arrancar NGINX, que lo resuelve por DNS al iniciar.
+aplicar parada.yaml
 kubectl apply -f influxdb.yaml -f prometheus.yaml -f grafana.yaml
 # Workers de JMeter para pruebas distribuidas: se crean a 0 y lanzar-prueba.sh --workers N los
 # arranca. El Job de cada prueba (master) usa la misma imagen que ellos.
 aplicar jmeter-workers.yaml
-aplicar parada.yaml
 DESPLIEGUES="resultados app influxdb prometheus grafana parada"
 
 echo "4/4 Esperando a que todo esté listo..."
@@ -96,7 +102,7 @@ echo "Laboratorio listo:"
 echo "  App de prueba: http://localhost:${PUERTO}0080/hello"
 echo "  Grafana:       http://localhost:${PUERTO}0000/d/lab-jmeter-k8s  (admin / admin)"
 echo "  Prometheus:    http://localhost:${PUERTO}0090"
-echo "  Parada:        http://localhost:${PUERTO}0082/estado  (POST /parar)"
+echo "  Parada:        a través de Grafana en http://localhost:${PUERTO}0000/parada/ (sesión Grafana)"
 if kubectl -n "$NS" get deploy objetivo >/dev/null 2>&1; then
   echo "  App objetivo:  http://localhost:${PUERTO}0081  ($(kubectl -n "$NS" get deploy objetivo -o jsonpath='{.spec.template.spec.containers[0].image}'))"
 else

@@ -1,6 +1,4 @@
-# Grafana con datasources y dashboard creados desde ficheros.
-# Los ConfigMaps grafana-datasources y grafana-dashboards los crea desplegar.sh:
-# los datasources se reutilizan de lab-jmeter y el dashboard es grafana/lab-jmeter-k8s.json.
+# Grafana con datasources, dashboard y proxy interno creados desde ficheros por desplegar.sh.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -34,6 +32,19 @@ spec:
               mountPath: /etc/grafana/provisioning/datasources
             - name: dashboards
               mountPath: /etc/grafana/provisioning/dashboards
+        - name: proxy
+          image: nginx:stable-alpine
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            periodSeconds: 5
+          volumeMounts:
+            - name: proxy-config
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: default.conf
       volumes:
         - name: datasources
           configMap:
@@ -41,6 +52,9 @@ spec:
         - name: dashboards
           configMap:
             name: grafana-dashboards
+        - name: proxy-config
+          configMap:
+            name: grafana-proxy
 ---
 apiVersion: v1
 kind: Service
@@ -53,5 +67,5 @@ spec:
     app: grafana
   ports:
     - port: 3000
-      targetPort: 3000
+      targetPort: 8080
       nodePort: 30000   # http://localhost:30000 (admin / admin)
