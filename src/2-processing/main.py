@@ -59,7 +59,8 @@ def main() -> None:
     args.add_argument("--realistic-bodies", action="store_true",
                       help="cuerpos JSON realistas (capa de IA): el modelo de los bodies sale solo de las peticiones 2xx; "
                            "con --jar, las peticiones sin campos en los logs salen del DTO; "
-                           "aprende cuantiles, campos distintos y campos únicos")
+                           "aprende cuantiles, campos distintos y campos únicos, "
+                           "y JMeter corrige cada body justo antes de enviarlo")
     opts = args.parse_args()
 
     if not opts.logs and not opts.jar:
@@ -139,7 +140,7 @@ def main() -> None:
         model, think_times, profile, opts.output,
         opts.host, opts.port, path_params, bodies,
         correlation, session, query_params=query_params, 
-        header_models=header_models,
+        header_models=header_models, body_rules=body_rules,
     )
     print(f"Plan generado: {opts.output}")
 

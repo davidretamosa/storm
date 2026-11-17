@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -426,7 +427,8 @@ def test_dto_values_are_synthetic(classes):
 
 def test_new_modules_know_nothing_of_the_bankapp():
     # El T-3.3 y el T-3.4 añaden aquí sus archivos
-    paths = [ROOT / "traffic_model" / "dto_bodies.py", ROOT / "traffic_model" / "body_rules.py"]
+    paths = [ROOT / "traffic_model" / "dto_bodies.py", ROOT / "traffic_model" / "body_rules.py",
+             ROOT / "jmx_generator" / "templates" / "body_fix.groovy"]
     assert app_terms(paths) == []
 
 
@@ -729,3 +731,552 @@ def test_main_prints_the_rules_only_with_the_flag(tmp_path):
     counts = run_main(["--logs", str(log), "--realistic-bodies"], tmp_path / "both.jmx")
     assert ("Bodies realistas: reglas en 2 peticiones (2 con cuantiles, 1 con campos distintos, "
             "1 con campos únicos).") in counts
+
+
+# ---------------------------------------------------------------------------
+# Sección 4 · JMeter (T-3.4): el PreProcessor que corrige el body justo antes de enviarlo
+# ---------------------------------------------------------------------------
+
+from bench import jmeter as bench_jmeter               # noqa: E402  (cada sección trae lo suyo)
+from bench import jmx as bench_jmx                     # noqa: E402
+from bench.bankapp import free_port                    # noqa: E402
+from bench.run import _wait_for_port                   # noqa: E402
+from jmx_generator.generator import TEMPLATES_DIR, _body_fix_script, generate_jmx   # noqa: E402
+
+FIX_NAME = "STORM-IA: corregir el body"
+FIX_TEMPLATE = TEMPLATES_DIR / "body_fix.groovy"
+JMETER_HOME = bench_jmeter.jmeter_binary().resolve().parents[1]
+GROOVY = sorted((JMETER_HOME / "lib").glob("groovy-3*.jar"))
+needs_groovy = pytest.mark.skipif(not GROOVY or shutil.which("java") is None,
+                                  reason="no está el Groovy de JMeter o no hay java")
+needs_jmeter = pytest.mark.skipif(not bench_jmeter.jmeter_binary().exists(), reason="no está JMeter")
+
+FIX_RULES = {ITEMS: {"numbers": {"size": {"q": quantile_table(list(range(1, 101))), "decimals": 2}},
+                     "different": [["sourceId", "targetId"]],
+                     "unique": {"contact": {"prefix": "storm.", "suffix": "@example.com"}}}}
+WEIGHTS = [[1, 0.4], [2, 0.3], [3, 0.3]]
+
+
+def fix_model(correlated=None):
+    """El stormModel que lee el script: los valores de sourceId/targetId y, si hace falta, su correlación."""
+    model = {"bodies": {ITEMS: {"sourceId": {"type": "choice", "values": WEIGHTS},
+                                "targetId": {"type": "choice", "values": WEIGHTS}}},
+             "correlation": {}}
+    if correlated:
+        model["correlation"]["body_resources"] = {ITEMS: correlated}
+    return model
+
+
+def render_plan(path, **extra):
+    """generate_jmx con un modelo mínimo de una petición con body; devuelve los bytes del plan."""
+    generate_jmx({"states": [ITEMS], "start": {ITEMS: 1.0}, "transitions": {ITEMS: {"END": 1.0}}},
+                 {}, {"vusers": 1, "ramp_up_seconds": 1, "duration_seconds": 10}, str(path),
+                 bodies={ITEMS: {"size": {"type": "number", "min": 1, "max": 9, "decimals": 0, "presence": 1.0}}},
+                 **extra)
+    return Path(path).read_bytes()
+
+
+def fix_nodes(plan):
+    return [node for node in ET.parse(plan).iter("JSR223PreProcessor") if node.get("testname") == FIX_NAME]
+
+
+def fix_script(plan):
+    """El script del PreProcessor «STORM-IA: corregir el body» del plan, ya sin escapes XML."""
+    for prop in fix_nodes(plan)[0].iter("stringProp"):
+        if prop.get("name") == "script":
+            return prop.text
+    raise AssertionError("el PreProcessor no tiene script")
+
+
+def embedded_rules(script):
+    """Las reglas tal como van entre ''' y ''' en el script (sin deshacer el escape de Groovy)."""
+    start = script.index("'''") + 3
+    return script[start:script.index("'''", start)]
+
+
+def test_without_rules_there_is_no_preprocessor(tmp_path):
+    without = render_plan(tmp_path / "sin.jmx")
+    none = render_plan(tmp_path / "none.jmx", body_rules=None)
+    empty = render_plan(tmp_path / "empty.jmx", body_rules={})
+    assert without == none == empty
+    assert FIX_NAME.encode() not in without
+    assert b"__BODY_RULES_JSON__" not in without
+
+
+def test_the_preprocessor_is_the_first_child_of_the_while(tmp_path):
+    # Control positivo del anterior: con reglas, el bloque sí está, y en su sitio
+    plan = tmp_path / "con.jmx"
+    render_plan(plan, body_rules=FIX_RULES)
+    root = ET.parse(plan).getroot()
+    assert len(fix_nodes(plan)) == 1
+    children = list(bench_jmx.child_tree(root, root.find(".//WhileController")))
+    first, tree, headers = children[:3]
+    assert first.tag == "JSR223PreProcessor" and first.get("testname") == FIX_NAME
+    assert tree.tag == "hashTree" and len(tree) == 0
+    assert headers.tag == "JSR223PreProcessor" and headers.get("testname") == "Preparar cabeceras HTTP"
+    # Fuera del While (el login, el inicio de sesión) no hay ningún otro
+    assert sum(1 for node in root.iter() if node.get("testname") == FIX_NAME) == 1
+
+
+def test_the_rules_travel_inside_the_script(tmp_path):
+    rules = {**FIX_RULES, "PUT /items/{id}": {"numbers": {}, "different": [],
+                                              "unique": {"note": {"prefix": "año <&> ", "suffix": "\"z"}}}}
+    plan = tmp_path / "con.jmx"
+    render_plan(plan, body_rules=rules)
+    script = fix_script(plan)
+    text = embedded_rules(script)
+    # Sin \ ni ''' en las reglas, el escape no cambia nada salvo las \ del JSON (las dobla)
+    assert json.loads(text.replace("\\\\", "\\")) == rules
+    assert json.loads(embedded_rules(_body_fix_script(FIX_RULES))) == FIX_RULES
+    assert script == _body_fix_script(rules)
+    assert "__BODY_RULES_JSON__" not in script
+
+
+def test_the_script_has_no_jmeter_expressions(tmp_path):
+    assert "${" not in FIX_TEMPLATE.read_text(encoding="utf-8")
+    assert "${" not in _body_fix_script(FIX_RULES)
+    plan = tmp_path / "ref.jmx"
+    generate(["--logs", str(REFERENCE), "--session", "--session-users", "1,2,3", "--realistic-bodies"], plan)
+    assert "${" not in fix_script(plan)
+
+
+def test_main_with_the_flag_on_the_reference_log(tmp_path):
+    args = ["--logs", str(REFERENCE), "--session", "--session-users", "1,2,3"]
+    on = generate([*args, "--realistic-bodies"], tmp_path / "on.jmx")
+    off = generate(args, tmp_path / "off.jmx")
+    assert len(fix_nodes(on)) == 1
+    rules = json.loads(embedded_rules(fix_script(on)).replace("\\\\", "\\"))
+    assert rules["POST /api/transfers"]["different"] == [["fromAccountId", "toAccountId"]]
+    assert len(rules) == 3
+    # Control negativo: sin el flag no hay PreProcessor
+    assert fix_nodes(off) == []
+    assert FIX_NAME not in off.read_text(encoding="utf-8")
+
+
+def test_jar_only_with_the_flag_has_no_preprocessor(tmp_path):
+    plan = generate(["--jar", JAR, "--realistic-bodies"], tmp_path / "jar.jmx")
+    assert fix_nodes(plan) == []
+    assert FIX_NAME not in plan.read_text(encoding="utf-8")
+
+
+def test_plan_with_the_flag_is_reproducible(tmp_path):
+    args = ["--logs", str(REFERENCE), "--session", "--session-users", "1,2,3", "--realistic-bodies"]
+    first = hashlib.sha256(generate(args, tmp_path / "a.jmx").read_bytes()).hexdigest()
+    second = hashlib.sha256(generate(args, tmp_path / "b.jmx").read_bytes()).hexdigest()
+    assert first == second
+
+
+def test_markov_common_still_fixes_body_ids_the_same_way():
+    # Si la condición con la que markov_common.groovy pone los ids en el body cambia, este test avisa:
+    # body_fix.groovy repite esa misma condición para saber qué campos no tiene que tocar
+    common = (TEMPLATES_DIR / "markov_common.groovy").read_text(encoding="utf-8")
+    assert "correlation.body_resources?.get(state)" in common
+    assert "deletedIds[link.value]" in common
+    assert "body.containsKey(link.key)" in common
+    fix = FIX_TEMPLATE.read_text(encoding="utf-8")
+    assert "body_resources" in fix and "stormDeletedIds" in fix
+
+
+# El banco de Groovy: hace de JMeter (vars, props y log) con el Groovy 3 de JMeter
+HARNESS = r"""
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
+
+class Vars {
+    Map m = [:]
+    String get(String k) { m[k] == null ? null : m[k] as String }
+    void put(String k, String v) { m[k] = v }
+    Object getObject(String k) { m[k] }
+    void putObject(String k, Object v) { m[k] = v }
+}
+def vars = new Vars()
+def props = new Properties()
+def log = new Expando()
+log.error = { String message, Throwable t = null -> System.err.println("ERROR " + message) }
+def input = new JsonSlurper().parse(new File(args[1]))
+def script = new GroovyShell(new Binding([vars: vars, props: props, log: log])).parse(new File(args[0]).text)
+def out = []
+input.cases.each { c ->
+    vars.putObject("stormModel", input.model)
+    vars.putObject("stormIds", c.ids)
+    if (c.deleted != null) {
+        props.put("stormDeletedIds", c.deleted)
+    } else {
+        props.remove("stormDeletedIds")
+    }
+    vars.put("stormState", c.state)
+    vars.put("stormBody", c.raw != null ? c.raw : JsonOutput.toJson(c.body))
+    script.run()
+    out << vars.get("stormBody")
+}
+println JsonOutput.toJson([bodies: out, rules: vars.getObject("stormBodyRules")])
+"""
+
+THREADS_HARNESS = r"""
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
+
+class Vars {
+    Map m = [:]
+    String get(String k) { m[k] == null ? null : m[k] as String }
+    void put(String k, String v) { m[k] = v }
+    Object getObject(String k) { m[k] }
+    void putObject(String k, Object v) { m[k] = v }
+}
+def props = new Properties()            // como en JMeter: unas props para todos los hilos
+def log = new Expando()
+log.error = { String message, Throwable t = null -> System.err.println("ERROR " + message) }
+def input = new JsonSlurper().parse(new File(args[1]))
+def text = new File(args[0]).text
+def modelJson = JsonOutput.toJson(input.model)
+def bodyJson = JsonOutput.toJson(input.body)
+int threads = input.threads as int
+int calls = input.calls as int
+def results = Collections.synchronizedList([])
+// Cada hilo con sus vars y su script, compilados antes de arrancar los hilos
+def workers = (1..threads).collect {
+    def vars = new Vars()
+    [vars, new GroovyShell(new Binding([vars: vars, props: props, log: log])).parse(text)]
+}
+def pool = Executors.newFixedThreadPool(threads)
+def futures = workers.collect { worker ->
+    pool.submit({
+        def vars = worker[0]
+        def script = worker[1]
+        def model = new JsonSlurper().parseText(modelJson)
+        calls.times {
+            vars.putObject("stormModel", model)
+            vars.put("stormState", input.state as String)
+            vars.put("stormBody", bodyJson)
+            script.run()
+            results.add(vars.get("stormBody"))
+        }
+    } as Callable)
+}
+futures*.get()
+pool.shutdown()
+println JsonOutput.toJson(results)
+"""
+
+
+def groovy(tmp_path, harness, script, data):
+    """Corre `harness` con el Groovy de JMeter; devuelve (stdout en JSON, stderr)."""
+    (tmp_path / "harness.groovy").write_text(harness, encoding="utf-8")
+    (tmp_path / "fix.groovy").write_text(script, encoding="utf-8")
+    (tmp_path / "input.json").write_text(json.dumps(data), encoding="utf-8")
+    result = subprocess.run(["java", "-cp", str(JMETER_HOME / "lib" / "*"), "groovy.ui.GroovyMain",
+                             str(tmp_path / "harness.groovy"), str(tmp_path / "fix.groovy"),
+                             str(tmp_path / "input.json")], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout), result.stderr
+
+
+def run_fix(tmp_path, cases, rules=FIX_RULES, model=None, raw=False):
+    """[body de salida] de cada caso (dict si es JSON de objeto, texto si no), las reglas leídas y el stderr.
+
+    Con raw=True, el texto de stormBody tal cual, byte a byte.
+    """
+    out, err = groovy(tmp_path, HARNESS, _body_fix_script(rules),
+                      {"model": model if model is not None else fix_model(), "cases": cases})
+    if raw:
+        return out["bodies"], out["rules"], err
+    bodies = []
+    for text in out["bodies"]:
+        try:
+            parsed = json.loads(text)
+        except (TypeError, ValueError):
+            parsed = text
+        bodies.append(parsed if isinstance(parsed, dict) else text)
+    return bodies, out["rules"], err
+
+
+def case(body, **extra):
+    return {"state": ITEMS, "body": body, **extra}
+
+
+@needs_groovy
+def test_groovy_numbers_follow_the_quantiles(tmp_path):
+    bodies, _, err = run_fix(tmp_path, [case({"size": 0})] * 400)
+    sizes = [body["size"] for body in bodies]
+    assert len(sizes) == 400 and "ERROR" not in err
+    assert min(sizes) >= 1 and max(sizes) <= 100
+    assert all(round(size, 2) == size for size in sizes)
+    assert len(set(sizes)) > 300                    # se sortea de nuevo, no se copia el 0 de entrada
+    assert 35 < sorted(sizes)[200] < 65             # la mediana de 1..100 es 50,5
+    assert sum(1 for size in sizes if size >= 99.99) <= 3   # sin acumular valores en el máximo
+    assert sum(1 for size in sizes if size > 95.1) >= 5      # el último tramo (p95-p100) también sale
+    # Redondeo: decimals 0 con Math.round (2,6 -> 3) y decimals 1 con HALF_UP (2,25 -> 2,3)
+    rounding = {ITEMS: {"numbers": {"size": {"q": [2.6] * 21, "decimals": 0},
+                                    "rate": {"q": [2.25] * 21, "decimals": 1}},
+                        "different": [], "unique": {}}}
+    rounded, _, _ = run_fix(tmp_path, [case({"size": 0, "rate": 0})] * 10, rules=rounding)
+    assert all(body == {"size": 3, "rate": 2.3} for body in rounded)
+    # Un número que ha fijado la correlación no se toca
+    fixed_rules = {ITEMS: {"numbers": {"sourceId": {"q": quantile_table([5, 6, 7]), "decimals": 0}},
+                           "different": [], "unique": {}}}
+    kept, _, _ = run_fix(tmp_path, [case({"sourceId": 1}, ids={"/sources": 1})] * 20, rules=fixed_rules,
+                         model=fix_model({"sourceId": "/sources"}))
+    assert all(body["sourceId"] == 1 for body in kept)
+    integers = {ITEMS: {"numbers": {"size": {"q": quantile_table(list(range(1, 101))), "decimals": 0}},
+                        "different": [], "unique": {}}}
+    whole, _, _ = run_fix(tmp_path, [case({"size": 0})] * 50, rules=integers)
+    assert all(isinstance(body["size"], int) for body in whole)
+
+
+@needs_groovy
+def test_groovy_numbers_follow_a_skewed_shape(tmp_path):
+    values = [1 + i * 0.09 for i in range(95)] + [200, 400, 600, 800, 1000]   # el 95 % por debajo de 10
+    rules = {ITEMS: {"numbers": {"size": {"q": quantile_table(values), "decimals": 2}},
+                     "different": [], "unique": {}}}
+    bodies, _, _ = run_fix(tmp_path, [case({"size": 0})] * 400, rules=rules)
+    sizes = [body["size"] for body in bodies]
+    assert sum(1 for size in sizes if size < 10) >= 0.8 * len(sizes)
+    assert min(sizes) >= 1 and max(sizes) <= 1000
+    # Con un intervalo plano entre el mínimo y el máximo saldría alrededor de un 1 %
+
+
+@needs_groovy
+def test_groovy_different_redraws_the_free_field(tmp_path):
+    cases = [case({"sourceId": v, "targetId": v}) for v in (1, 2, 3)] * 50
+    bodies, _, err = run_fix(tmp_path, cases)
+    assert "ERROR" not in err
+    assert all(body["sourceId"] != body["targetId"] for body in bodies)
+    # Sin correlación se vuelve a sortear el segundo; el primero se queda
+    assert [body["sourceId"] for body in bodies] == [c["body"]["sourceId"] for c in cases]
+    assert {body["targetId"] for body in bodies} == {1, 2, 3}
+    # Los que ya eran distintos no se tocan
+    # Se comparan como texto: "1" y 1 coinciden
+    mixed, _, _ = run_fix(tmp_path, [case({"sourceId": "1", "targetId": 1})] * 30)
+    assert all(body["sourceId"] == "1" and body["targetId"] in (2, 3) for body in mixed)
+    kept, _, _ = run_fix(tmp_path, [case({"sourceId": 1, "targetId": 2})] * 20)
+    assert all(body == {"sourceId": 1, "targetId": 2} for body in kept)
+    # Con los pesos del modelo: si el 2 pesa 0,8 y el 3 0,1, sin el 1 salen ~8 de cada 9 doses
+    weighted = fix_model()
+    weighted["bodies"][ITEMS]["targetId"]["values"] = [[1, 0.1], [2, 0.8], [3, 0.1]]
+    drawn, _, _ = run_fix(tmp_path, [case({"sourceId": 1, "targetId": 1})] * 300, model=weighted)
+    assert all(body["targetId"] in (2, 3) for body in drawn)
+    assert sum(1 for body in drawn if body["targetId"] == 2) >= 0.75 * 300
+
+
+@needs_groovy
+def test_groovy_different_keeps_the_correlated_field(tmp_path):
+    model = fix_model({"sourceId": "/sources"})
+    cases = [case({"sourceId": 1, "targetId": 1}, ids={"/sources": 1}, deleted={"/sources": ["7"]})] * 100
+    bodies, _, _ = run_fix(tmp_path, cases, model=model)
+    assert all(body["sourceId"] == 1 and body["targetId"] in (2, 3) for body in bodies)
+
+
+@needs_groovy
+def test_groovy_different_keeps_the_correlated_field_when_it_is_second(tmp_path):
+    model = fix_model({"targetId": "/targets"})
+    cases = [case({"sourceId": 1, "targetId": 1}, ids={"/targets": 1})] * 100
+    bodies, _, _ = run_fix(tmp_path, cases, model=model)
+    assert all(body["targetId"] == 1 and body["sourceId"] in (2, 3) for body in bodies)
+    # Sin id de ese recurso en la sesión (aunque haya otros), el campo no está fijado
+    other = [case({"sourceId": 1, "targetId": 1}, ids={"/sources": 1})] * 100
+    free, _, _ = run_fix(tmp_path, other, model=model)
+    assert all(body["sourceId"] == 1 and body["targetId"] in (2, 3) for body in free)
+
+
+@needs_groovy
+def test_groovy_different_leaves_two_correlated_fields_alone(tmp_path):
+    model = fix_model({"sourceId": "/sources", "targetId": "/targets"})
+    cases = [case({"sourceId": 2, "targetId": 2}, ids={"/sources": 2, "/targets": 2})] * 50
+    bodies, _, err = run_fix(tmp_path, cases, model=model)
+    assert "ERROR" not in err
+    assert all(body == {"sourceId": 2, "targetId": 2} for body in bodies)
+
+
+@needs_groovy
+def test_groovy_a_deleted_correlated_id_is_not_fixed(tmp_path):
+    # Como el test de «keeps the correlated field», con el id de la sesión entre los eliminados. Para que
+    # se vea, el campo correlacionado es el segundo: si contara como fijado se sortearía el primero
+    model = fix_model({"targetId": "/targets"})
+    fixed = [case({"sourceId": 1, "targetId": 1}, ids={"/targets": 1}, deleted={"/targets": ["9"]})] * 100
+    free = [case({"sourceId": 1, "targetId": 1}, ids={"/targets": 1}, deleted={"/targets": ["1"]})] * 100
+    bodies, _, _ = run_fix(tmp_path, fixed + free, model=model)
+    assert all(body["targetId"] == 1 and body["sourceId"] in (2, 3) for body in bodies[:100])
+    assert all(body["sourceId"] == 1 and body["targetId"] in (2, 3) for body in bodies[100:])
+
+
+@needs_groovy
+def test_groovy_unique_values_never_repeat(tmp_path):
+    bodies, _, err = run_fix(tmp_path, [case({"contact": "x"})] * 200)
+    contacts = [body["contact"] for body in bodies]
+    assert "ERROR" not in err
+    assert len(set(contacts)) == 200
+    assert all(c.startswith("storm.") and c.endswith("@example.com") and c != "storm.@example.com"
+               for c in contacts)
+    # El testigo lleva la ejecución: otra JVM (otras props, el contador vuelve a 1) da otros valores
+    again, _, _ = run_fix(tmp_path, [case({"contact": "x"})] * 200)
+    assert not set(contacts) & {body["contact"] for body in again}
+
+
+@needs_groovy
+def test_groovy_unique_values_never_repeat_across_threads(tmp_path):
+    out, err = groovy(tmp_path, THREADS_HARNESS, _body_fix_script(FIX_RULES),
+                      {"model": fix_model(), "state": ITEMS, "threads": 8, "calls": 100, "body": {"contact": "x"}})
+    contacts = [json.loads(body)["contact"] for body in out]
+    assert "ERROR" not in err
+    assert len(contacts) == 800 and len(set(contacts)) == 800
+
+
+@needs_groovy
+def test_groovy_unique_respects_the_length(tmp_path):
+    rules = {ITEMS: {"numbers": {}, "different": [],
+                     "unique": {"code": {"prefix": "storm-code-", "suffix": "", "max": 16},
+                                "contact": {"prefix": "storm.", "suffix": "@example.com", "max": 16},
+                                "note": {"prefix": "n-", "suffix": "-z", "min": 40}}}}
+    bodies, _, err = run_fix(tmp_path, [case({"code": "a", "contact": "b", "note": "c"})] * 200, rules=rules)
+    assert "ERROR" not in err
+    for name in ("code", "contact"):
+        values = [body[name] for body in bodies]
+        assert all(len(v) <= 16 for v in values), name
+        assert len(set(values)) == 200, name
+    assert all(body["contact"].endswith("@example.com") for body in bodies)
+    notes = [body["note"] for body in bodies]
+    assert all(len(v) == 40 and v.startswith("n-x") and v.endswith("-z") for v in notes)
+    # En el modo normal el relleno es solo "x" (el "-" final es solo del modo «solo contador»)
+    assert all(not v[len("n-"):].lstrip("x").startswith("-") for v in notes)
+    assert len(set(notes)) == 200
+    # Cuando solo cabe el contador, sin trozos del prefijo: 1.000 llamadas, 1.000 valores (antes "sto" + "1"
+    # y "st" + "o1" daban lo mismo en la llamada 865)
+    tiny = {ITEMS: {"numbers": {}, "different": [],
+                    "unique": {"contact": {"prefix": "storm.", "suffix": "@example.com", "max": 16}}}}
+    many, _, _ = run_fix(tmp_path, [case({"contact": "b"})] * 1000, rules=tiny)
+    contacts = [body["contact"] for body in many]
+    assert len(set(contacts)) == 1000 and all(len(c) <= 16 and c.endswith("@example.com") for c in contacts)
+    # Con min y max en el modo «solo contador», el relleno acaba en "-": 1.500 llamadas, 1.500 valores (con
+    # solo "x", "xxx" + "1" y "xx" + "x1" daban lo mismo en la llamada 1.189)
+    sized = {ITEMS: {"numbers": {}, "different": [],
+                     "unique": {"code": {"prefix": "storm-username-", "suffix": "", "min": 4, "max": 8}}}}
+    padded, _, _ = run_fix(tmp_path, [case({"code": "a"})] * 1500, rules=sized)
+    codes = [body["code"] for body in padded]
+    assert len(set(codes)) == 1500 and all(4 <= len(c) <= 8 for c in codes)
+    assert codes[0] == "xx-1"
+    # Si ni el contador y el sufijo caben, se corta por el final: la longitud se respeta igual
+    tight = {ITEMS: {"numbers": {}, "different": [],
+                     "unique": {"code": {"prefix": "p-", "suffix": "@example.com", "max": 8}}}}
+    short, _, _ = run_fix(tmp_path, [case({"code": "a"})] * 50, rules=tight)
+    assert all(len(body["code"]) <= 8 for body in short)
+
+
+@needs_groovy
+def test_groovy_unique_leaves_a_correlated_field_alone(tmp_path):
+    model = fix_model({"contact": "/contacts"})
+    cases = [case({"contact": 5}, ids={"/contacts": 5})] * 20 + [case({"contact": 5})] * 20
+    bodies, _, _ = run_fix(tmp_path, cases, model=model)
+    assert all(body["contact"] == 5 for body in bodies[:20])
+    assert all(str(body["contact"]).startswith("storm.") for body in bodies[20:])
+
+
+@needs_groovy
+def test_groovy_leaves_the_body_intact_when_something_fails(tmp_path):
+    broken = {ITEMS: {"numbers": {"size": {"q": "x", "decimals": 2}}, "different": [],
+                      "unique": {"contact": {"prefix": "storm.", "suffix": "@example.com"}}}}
+    raw = '{"size": 3,   "contact": "a"}'          # con espacios: si se volviera a escribir, cambiaría
+    bodies, _, err = run_fix(tmp_path, [{"state": ITEMS, "raw": raw}], rules=broken, raw=True)
+    assert bodies == [raw]
+    assert "ERROR STORM-IA bodies: POST /items" in err
+    # También si falla más tarde, cuando los números ya han cambiado el body: en «único» o en «distinto»
+    late_unique = {ITEMS: {"numbers": FIX_RULES[ITEMS]["numbers"], "different": [],
+                           "unique": {"contact": {"prefix": "storm.", "suffix": "", "max": "zz"}}}}
+    late_pair = {ITEMS: {"numbers": FIX_RULES[ITEMS]["numbers"], "different": [5], "unique": {}}}
+    for rules in (late_unique, late_pair):
+        out, _, late_err = run_fix(tmp_path, [{"state": ITEMS, "raw": raw}], rules=rules, raw=True)
+        assert out == [raw]
+        assert "ERROR STORM-IA bodies: POST /items" in late_err
+
+
+@needs_groovy
+def test_groovy_leaves_non_json_and_unknown_requests_alone(tmp_path):
+    cases = [{"state": ITEMS, "raw": "esto no es json"},
+             {"state": ITEMS, "raw": "[1, 2]"},
+             {"state": ITEMS, "raw": ""},
+             {"state": "GET /other", "raw": '{"size":  3}'},
+             {"state": "END", "raw": '{"size":  3}'}]
+    bodies, _, err = run_fix(tmp_path, cases, raw=True)
+    assert bodies == [c["raw"] for c in cases]
+    assert "ERROR" not in err
+
+
+@needs_groovy
+def test_groovy_does_not_add_missing_fields(tmp_path):
+    bodies, _, err = run_fix(tmp_path, [case({"other": 1}), case({"sourceId": 1}), case({"targetId": 1})])
+    assert "ERROR" not in err
+    assert bodies == [{"other": 1}, {"sourceId": 1}, {"targetId": 1}]
+
+
+@needs_groovy
+def test_groovy_reads_rules_with_quotes_and_backslashes(tmp_path):
+    form = {"prefix": "a'''b\\c\"d'", "suffix": "''"}
+    rules = {ITEMS: {"numbers": {}, "different": [], "unique": {"code": form}}}
+    bodies, read, err = run_fix(tmp_path, [case({"code": "x"})] * 3, rules=rules)
+    assert "ERROR" not in err
+    assert read == rules
+    assert all(body["code"].startswith(form["prefix"]) and body["code"].endswith("''") for body in bodies)
+
+
+def items_log(path, sessions=12):
+    """Log sintético genérico: sesiones de 5 POST /items 201 separados 200 ms, con sourceId y targetId en
+    {1, 2, 3} y nunca iguales, un code distinto en cada línea y un size sesgado."""
+    pairs = never_equal(sessions * 5)
+    lines = []
+    for i, pair in enumerate(pairs):
+        session, step = divmod(i, 5)
+        ms = session * 60000 + step * 200
+        size = round(1 + (i * 37 % 100) * 0.05, 2) if i % 10 else 200.0 + i
+        lines.append(json.dumps({"timestamp": f"2026-10-01T09:{ms // 60000:02d}:{ms % 60000 // 1000:02d}."
+                                              f"{ms % 1000:03d}Z",
+                                 "requestId": f"r{i}", "sessionId": f"s{session}", "userId": 1, "method": "POST",
+                                 "endpoint": "/items", "path": "/items", "status": 201, "durationMs": 5,
+                                 "body": {**pair, "code": f"lote-{i:03d}k{i * 7 % 11}", "size": size}}))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def jmeter_against_echo(tmp_path, log, flag):
+    """Pla de main.py (con el flag o sin) y JMeter real contra el servidor eco: (bodies recibidos, jmeter.log)."""
+    port = free_port()
+    name = "on" if flag else "off"
+    plan = generate(["--logs", str(log), *(["--realistic-bodies"] if flag else []),
+                     "--host", "127.0.0.1", "--port", str(port)], tmp_path / f"{name}.jmx")
+    received = tmp_path / f"rebut_{name}.jsonl"
+    server = subprocess.Popen([sys.executable, "-m", "bench.echo_server", "--out", str(received),
+                               "--port", str(port), "--logs", str(log)],
+                              cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    try:
+        _wait_for_port(port, server)
+        code, output = bench_jmeter.run(plan, tmp_path / f"{name}.jtl", tmp_path / f"jmeter_{name}.log",
+                                        {"duration": 10, "vusers": 3, "rampup": 1})
+        assert code == 0, output
+    finally:
+        server.terminate()
+        server.wait(timeout=10)
+    lines = [json.loads(line) for line in received.read_text(encoding="utf-8").splitlines()]
+    bodies = [line["body"] for line in lines if line["method"] == "POST" and line["endpoint"] == "/items"]
+    return bodies, (tmp_path / f"jmeter_{name}.log").read_text(encoding="utf-8")
+
+
+@needs_jmeter
+def test_real_jmeter_runs_the_preprocessor(tmp_path):
+    log = items_log(tmp_path / "items.jsonl")
+    sent = [json.loads(line)["body"] for line in log.read_text(encoding="utf-8").splitlines()]
+    bodies, jmeter_log = jmeter_against_echo(tmp_path, log, flag=True)
+    assert [line for line in jmeter_log.splitlines() if " ERROR " in line] == []
+    assert len(bodies) >= 30
+    assert all(body["sourceId"] != body["targetId"] for body in bodies)
+    codes = [body["code"] for body in bodies]
+    assert len(set(codes)) == len(codes)
+    assert not set(codes) & {body["code"] for body in sent}
+    sizes = [body["size"] for body in sent]
+    assert all(min(sizes) <= body["size"] <= max(sizes) for body in bodies)
+    # La forma del log (el 90 % por debajo de 6), no un intervalo plano hasta 254
+    assert sum(1 for body in bodies if body["size"] < 10) >= 0.6 * len(bodies)
+    # Control: el mismo log sin el flag sí envía orígenes iguales a destinos (si no, el test no vería nada)
+    plain, _ = jmeter_against_echo(tmp_path, log, flag=False)
+    assert len(plain) >= 30
+    assert any(body["sourceId"] == body["targetId"] for body in plain)
+    assert sum(1 for body in plain if body["size"] < 10) < 0.3 * len(plain)

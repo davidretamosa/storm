@@ -9,6 +9,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 PATH_PARAM = re.compile(r"\{(\w+)\}")
+BODY_RULES_PLACEHOLDER = "__BODY_RULES_JSON__"
 
 
 def _to_jmeter_path(endpoint: str) -> str:
@@ -55,6 +56,27 @@ def _groovy(script: str, model_json: str) -> str:
     ) + (TEMPLATES_DIR / script).read_text(encoding="utf-8")
 
 
+def _body_fix_script(rules: dict) -> str:
+    """PreProcessor de la capa de IA (--realistic-bodies) con las reglas de los bodies incrustadas.
+
+    Las reglas se escapan igual que el modelo en _groovy, para que el Groovy las lea tal cual.
+    """
+
+    rules_json = json.dumps(
+        rules, ensure_ascii=False, separators=(",", ":")
+    )
+
+    embedded = rules_json.replace(
+        "\\", "\\\\"
+    ).replace("'''", "\\'\\'\\'")
+
+    return (
+        TEMPLATES_DIR / "body_fix.groovy"
+    ).read_text(encoding="utf-8").replace(
+        BODY_RULES_PLACEHOLDER, embedded
+    )
+
+
 def generate_jmx(
     model: dict,
     think_times: Dict[str, Dict[str, List[int]]],
@@ -68,6 +90,7 @@ def generate_jmx(
     session: Optional[dict] = None,
     query_params: Optional[dict] = None,
     header_models: Optional[dict] = None,
+    body_rules: Optional[dict] = None,
 ) -> None:
     """Escribe el plan JMX generado."""
 
@@ -126,6 +149,9 @@ def generate_jmx(
         login_response_script=_groovy(
             "login_response.groovy", model_json
         ) if session else "",
+        body_fix_script=_body_fix_script(
+            body_rules
+        ) if body_rules else "",
     )
 
     Path(output_path).parent.mkdir(
