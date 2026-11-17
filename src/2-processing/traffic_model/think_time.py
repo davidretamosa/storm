@@ -40,7 +40,13 @@ def build_think_times(df, samples=20, max_ms=120_000):
     # Corregir la pausa según el significado del timestamp
     if "duration_ms" in steps.columns and "timestamp_kind" in steps.columns:
 
-        duration = steps["duration_ms"].clip(lower=0).fillna(0)
+        # Sustituir duraciones infinitas por valores ausentes
+        duration = (
+            steps["duration_ms"]
+            .replace([np.inf, -np.inf], np.nan)
+            .clip(lower=0)
+            .fillna(0)
+        )
 
         next_duration = duration.groupby(
             steps["session_id"]
@@ -81,15 +87,34 @@ def build_think_times(df, samples=20, max_ms=120_000):
     return think_times
 
 
-def add_default_pauses(think_times, model, default_pause_ms=DEFAULT_PAUSE_MS):
-    """Pone la pausa por defecto en las transiciones del modelo que no tienen pausas de los logs:
-    todas si no hay logs, y las que añade el .jar (p. ej. un endpoint que nadie ha usado)."""
-    for source, targets in model["transitions"].items():
+def add_default_pauses(
+    think_times,
+    model,
+    default_pause_ms=DEFAULT_PAUSE_MS
+):
+    """Añade pausas por defecto a las transiciones sin tiempos observados,
+    tanto generales como condicionadas al código HTTP.
+    """
+
+    def add_pauses(source, targets):
         for target in targets:
+
             if target == END:
                 continue
+
             if source not in think_times:
                 think_times[source] = {}
+
             if target not in think_times[source]:
                 think_times[source][target] = list(default_pause_ms)
+
+    # Transiciones generales
+    for source, targets in model["transitions"].items():
+        add_pauses(source, targets)
+
+    # Transiciones condicionadas al código HTTP
+    for source, statuses in model.get("status_transitions", {}).items():
+        for status, targets in statuses.items():
+            add_pauses(source, targets)
+
     return think_times

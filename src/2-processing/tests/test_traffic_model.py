@@ -476,3 +476,65 @@ def test_markov_end_probability_without_sessions():
             assert math.isclose(
                 sum(probabilities.values()), 1.0
             )
+
+def test_default_pauses_for_status_transitions():
+    from traffic_model.think_time import add_default_pauses
+
+    model = {
+        "transitions": {
+            "GET /api/a": {
+                "GET /api/b": 1.0
+            }
+        },
+        "status_transitions": {
+            "GET /api/a": {
+                "500": {
+                    "GET /api/c": 1.0,
+                    "END": 0.0
+                }
+            }
+        }
+    }
+
+    observed = {
+        "GET /api/a": {
+            "GET /api/b": [750]
+        }
+    }
+
+    result = add_default_pauses(
+        observed,
+        model,
+        default_pause_ms=[1000, 2000]
+    )
+
+    # Conservar las pausas aprendidas.
+    assert result["GET /api/a"]["GET /api/b"] == [750]
+
+    # Añadir pausas a las transiciones condicionadas.
+    assert result["GET /api/a"]["GET /api/c"] == [1000, 2000]
+
+    # No añadir pausas para finalizar sesiones.
+    assert "END" not in result["GET /api/a"]
+
+def test_think_time_infinite_duration():
+    import numpy as np
+    import pandas as pd
+    from traffic_model.think_time import build_think_times
+
+    df = pd.DataFrame({
+        "timestamp": pd.to_datetime([
+            "2026-11-16T10:00:00",
+            "2026-11-16T10:00:02"
+        ]),
+        "method": ["GET", "GET"],
+        "endpoint": ["/api/a", "/api/b"],
+        "session_id": ["s1", "s1"],
+        "timestamp_kind": ["start", "start"],
+        "duration_ms": [np.inf, 100.0]
+    })
+
+    result = build_think_times(df, samples=1)
+
+    # Una duración infinita no debe eliminar la pausa.
+    assert result["GET /api/a"]["GET /api/b"] == [2000]
