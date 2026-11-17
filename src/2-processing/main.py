@@ -15,10 +15,11 @@ from jmx_generator.generator import generate_jmx
 from log_parser.parser import parse_logs
 from traffic_model.correlation import build_correlation
 from traffic_model.markov import build_markov_model
-from traffic_model.payloads import build_body_models, build_path_params
+from traffic_model.payloads import build_body_models, build_path_params, build_query_params
 from traffic_model.scaling import predict_traffic_scale
 from traffic_model.session import build_session_config, remove_session_requests
 from traffic_model.think_time import add_default_pauses, build_think_times
+from traffic_model.headers import build_header_models
 
 
 def pause_range(text):
@@ -48,6 +49,11 @@ def main() -> None:
                       help="ruta del POST que inicia sesión, si no es /api/sessions")
     args.add_argument("--session-users",
                       help="usuarios con los que iniciar sesión, p. ej. 1,2,3 (por defecto, los de los logs)")
+    args.add_argument(
+        "--allowed-headers",
+        default="",
+        help="Cabeceras HTTP permitidas, separadas por comas"
+    )
     opts = args.parse_args()
 
     if not opts.logs and not opts.jar:
@@ -89,16 +95,34 @@ def main() -> None:
                                endpoints=endpoints, jar_weight=opts.jar_weight)
     think_times = add_default_pauses(build_think_times(df_logs), model, pause_range(opts.default_pause))
     path_params = build_path_params(df_logs)
+    query_params = build_query_params(df_logs)
+    allowed_headers = [
+        name.strip().lower()
+        for name in opts.allowed_headers.split(",")
+        if name.strip()
+    ]
+    
+    header_models = build_header_models(
+        df_logs,
+        allowed_headers
+    )
+    print(f"{len(header_models)} peticiones con cabeceras HTTP.")
     bodies = build_body_models(df_logs, endpoints)
     profile = predict_traffic_scale(df_logs)
     correlation = build_correlation(model, bodies)
     print(f"{len(model['states'])} estados en la cadena de Markov; {profile['vusers']} usuarios virtuales.")
-    print(f"{len(path_params)} peticiones con parámetros de ruta; {len(bodies)} con cuerpo JSON.")
+    print(f"{len(path_params)} peticiones con parámetros de ruta; "
+      f"{len(query_params)} con parámetros de consulta; "
+      f"{len(bodies)} con cuerpo JSON.")
     print(f"Correlación: {len(correlation['creates'])} peticiones crean algo; sus ids se reutilizan en la sesión.")
 
     print("--- 3. GENERACIÓN DEL ESCENARIO ---")
-    generate_jmx(model, think_times, profile, opts.output, opts.host, opts.port, path_params, bodies, correlation,
-                 session)
+    generate_jmx(
+        model, think_times, profile, opts.output,
+        opts.host, opts.port, path_params, bodies,
+        correlation, session, query_params=query_params, 
+        header_models=header_models,
+    )
     print(f"Plan generado: {opts.output}")
 
 

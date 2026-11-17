@@ -31,20 +31,56 @@ def resource_of_param(endpoint, param):
     before = endpoint.split("{" + param + "}")[0]
     return before.rstrip("/")
 
+def deleted_resource(state):
+    """Identifica el recurso y el parámetro de una operación DELETE."""
+    method, endpoint = state.split(" ", 1)
+
+    if method != "DELETE":
+        return None
+
+    match = re.search(r"/\{([^{}]+)\}$", endpoint)
+
+    if not match:
+        return None
+
+    param = match.group(1)
+
+    return {
+        "resource": resource_of_param(endpoint, param),
+        "param": param
+    }
+
+def singularize(word):
+    """Convierte plurales ingleses comunes a singular."""
+
+    word = word.lower()
+
+    if word.endswith("ies"):
+        return word[:-3] + "y"
+
+    if word.endswith(("sses", "shes", "ches", "xes", "zes")):
+        return word[:-2]
+
+    if word.endswith("s") and not word.endswith("ss"):
+        return word[:-1]
+
+    return word
 
 def resource_of_field(field, resources):
-    """El recurso al que pertenece un campo id del body, por su nombre.
+    """Identifica el recurso asociado a un campo id del body."""
 
-    'userId' -> '/api/users' ; 'fromAccountId' -> '/api/accounts' ; 'id' -> None
-    """
-    base = re.sub(r"(_id|Id|ID)$", "", field).lower()      # "fromAccountId" -> "fromaccount"
+    base = re.sub(r"(_id|Id|ID)$", "", field).lower()
+
     if not base:
         return None
+
     for resource in sorted(resources):
-        segment = resource.rstrip("/").split("/")[-1].lower()   # "/api/accounts" -> "accounts"
-        singular = segment[:-1] if segment.endswith("s") else segment
+        segment = resource.rstrip("/").split("/")[-1].lower()
+        singular = singularize(segment)
+
         if base.endswith(singular):
             return resource
+
     return None
 
 
@@ -85,4 +121,17 @@ def build_correlation(model, bodies):
                 used.add(resource)
                 body_resources.setdefault(state, {})[name] = resource
 
-    return {"creates": creates, "path_resources": path_resources, "body_resources": body_resources}
+    # 4. Las peticiones que eliminan recursos
+    deletes = {}
+
+    for state in model["states"]:
+        resource = deleted_resource(state)
+        if resource:
+            deletes[state] = resource
+
+    return {
+        "creates": creates,
+        "path_resources": path_resources,
+        "body_resources": body_resources,
+        "deletes": deletes
+    }

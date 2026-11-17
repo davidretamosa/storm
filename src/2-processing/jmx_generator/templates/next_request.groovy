@@ -1,20 +1,49 @@
-
 // Tras cada petición: elige la siguiente según model.transitions y la pausa hasta ella
 def current = vars.get("stormState")
-rememberCreatedId(current, prev)     // correlación: ¿ha creado algo? apunta su id
+
+rememberCreatedId(current, prev)
+rememberDeletedId(current, prev)
+
 int steps = Integer.parseInt(vars.get("stormSteps")) + 1
 vars.put("stormSteps", String.valueOf(steps))
 
-def next = pick(model.transitions[current] ?: [END: 1])
+// Código HTTP de la petición anterior
+def status = prev.getResponseCode()
+
+// Buscar transiciones condicionadas al código HTTP
+def conditioned = model.status_transitions
+    ?.get(current)
+    ?.get(status)
+
+// Si no hay información específica, utilizar el modelo original
+def distribution = conditioned ?: model.transitions[current] ?: [END: 1]
+
+def next = pick(distribution)
+
 if (steps >= model.max_steps) {
     next = "END"
 }
+
 if (next == "END") {
     vars.put("stormState", "END")
     return
 }
 
-goTo(next)
+// Calcular y aplicar la pausa antes de preparar la petición
 def pauses = model.think_time_ms[current]?.get(next)
-long pauseMs = pauses ? (pauses[ThreadLocalRandom.current().nextInt(pauses.size())] as long) : 0L
-vars.put("stormThinkMs", String.valueOf(pauseMs))
+
+long pauseMs = pauses ?
+    (pauses[ThreadLocalRandom.current().nextInt(pauses.size())] as long) : 0L
+
+if (pauseMs > 0) {
+    try {
+        Thread.sleep(pauseMs)
+    } catch (InterruptedException e) {
+        Thread.currentThread().interrupt()
+        vars.put("stormState", "END")
+        return
+    }
+}
+
+// Seleccionar los identificadores después de la pausa
+goTo(next)

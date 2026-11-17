@@ -5,13 +5,57 @@ las demás líneas se leen con el formato JSON acordado con input.
 """
 import json
 from datetime import datetime, timezone
+from log_parser.headers import normalize_headers
 
+def normalize_attributes(attributes):
+    """Normaliza los atributos OpenTelemetry a un diccionario."""
+
+    if isinstance(attributes, dict):
+        return attributes
+
+    if not isinstance(attributes, list):
+        return {}
+
+    result = {}
+
+    for attribute in attributes:
+
+        if not isinstance(attribute, dict):
+            continue
+
+        key = attribute.get("key")
+        value = attribute.get("value", {})
+
+        if not key or not isinstance(value, dict):
+            continue
+
+        # Normalizar arrays de strings (cabeceras HTTP)
+        if "arrayValue" in value:
+            items = value["arrayValue"].get("values", [])
+
+            result[key] = [
+                item["stringValue"]
+                for item in items
+                if isinstance(item, dict)
+                and "stringValue" in item
+            ]
+            continue
+
+        for value_type in (
+            "stringValue",
+            "intValue",
+            "doubleValue",
+            "boolValue",
+        ):
+            if value_type in value:
+                result[key] = value[value_type]
+                break
+
+    return result
 
 def parse_otel_record(record):
     """Un registro OTel (ya leído como diccionario) -> fila con nuestras columnas, o None si no vale."""
-    attributes = record.get("attributes", {})
-    if not isinstance(attributes, dict):
-        return None
+    attributes = normalize_attributes(record.get("attributes", {}))
 
     # 1. Método HTTP
     method = (
@@ -28,21 +72,70 @@ def parse_otel_record(record):
         or record.get("endpoint")
     )
 
-    if not method or not endpoint:
+    # Validar los campos obligatorios
+    if not isinstance(method, str) or not method.strip():
+        return None
+
+    if not isinstance(endpoint, str) or not endpoint.strip():
         return None
 
     row = {}
 
     # 3. Identificadores (acuerdo de proyecto + fallback estándar OTel)
     row["request_id"] = attributes.get("request.id") or record.get("spanId")
-    row["session_id"] = attributes.get("session.id") or record.get("traceId")
+    # Una traza no equivale a una sesión de usuario.
+    row["session_id"] = attributes.get("session.id")
     row["user_id"] = attributes.get("user.id")
 
     row["method"] = method
-    row["endpoint"] = endpoint
-    row["path"] = attributes.get("url.path") or attributes.get("http.target") or endpoint
+    row["endpoint"] = endpoint.split("?", 1)[0]
+
+    # Ruta y parámetros de consulta
+    path = attributes.get("url.path") or attributes.get("http.target") or endpoint
+
+    # Si la ruta no es válida, utilizar el endpoint
+    if not isinstance(path, str) or not path.strip():
+        path = endpoint
+
+    query = attributes.get("url.query")
+
+    # Compatibilidad con el formato antiguo de OpenTelemetry
+    if "?" in path:
+        path, legacy_query = path.split("?", 1)
+        if query is None:
+            query = legacy_query
+
+    row["path"] = path
+    row["query"] = query
+    # Extraer las cabeceras HTTP de la petición
+    headers = {}
+    prefix = "http.request.header."
+
+    for key, value in attributes.items():
+        if key.startswith(prefix):
+            name = key[len(prefix):].lower()
+            headers[name] = value
+
+    row["headers"] = normalize_headers(headers)
     row["status"] = attributes.get("http.response.status_code") or attributes.get("http.status_code")
+    # Duración de la petición HTTP en milisegundos
     row["duration_ms"] = attributes.get("app.request.duration_ms")
+
+    # Si no existe el atributo personalizado, calcular
+    # la duración a partir de los timestamps del span OTLP.
+    if row["duration_ms"] is None:
+        start = record.get("startTimeUnixNano")
+        end = record.get("endTimeUnixNano")
+
+        if start is not None and end is not None:
+            try:
+                duration = (int(end) - int(start)) / 1_000_000
+
+                if duration >= 0:
+                    row["duration_ms"] = duration
+
+            except (ValueError, TypeError, OverflowError):
+                pass
     row["request_size_bytes"] = attributes.get("app.request.size_bytes")
     row["response_size_bytes"] = attributes.get("app.response.size_bytes")
 
@@ -72,10 +165,59 @@ def parse_otel_record(record):
             try:
                 dt = datetime.fromtimestamp(int(nano_ts) / 1_000_000_000, tz=timezone.utc)
                 row["timestamp"] = dt.isoformat()
-            except (ValueError, OverflowError):
+                if record.get("startTimeUnixNano") is not None:
+                    row["timestamp_kind"] = "start"
+            except (ValueError, TypeError, OverflowError):
                 row["timestamp"] = None
+                row["timestamp_kind"] = "unknown"
 
     if not row["timestamp"]:
         return None
 
     return row
+
+def parse_otlp_export(record):
+    """Extrae las peticiones HTTP de una exportación OTLP."""
+
+    rows = []
+
+    resources = record.get("resourceSpans")
+
+    if not isinstance(resources, list):
+        return rows
+
+    for resource in resources:
+
+        if not isinstance(resource, dict):
+            continue
+
+        scopes = resource.get("scopeSpans")
+
+        if not isinstance(scopes, list):
+            continue
+
+        for scope in scopes:
+
+            if not isinstance(scope, dict):
+                continue
+
+            spans = scope.get("spans")
+
+            if not isinstance(spans, list):
+                continue
+
+            for span in spans:
+
+                if not isinstance(span, dict):
+                    continue
+
+                # Solo se procesan spans de servidor
+                if span.get("kind") not in (2, "SPAN_KIND_SERVER"):
+                    continue
+
+                row = parse_otel_record(span)
+
+                if row is not None:
+                    rows.append(row)
+
+    return rows

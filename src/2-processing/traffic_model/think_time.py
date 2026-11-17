@@ -19,15 +19,59 @@ def build_think_times(df, samples=20, max_ms=120_000):
     frecuentes y alguna larga). Las pausas mayores que `max_ms` se recortan.
     """
     if df is None or df.empty:
-        return {}  # sin logs no hay pausas observadas
+        return {}
+
+    # Si los logs no tienen identificadores de sesión,
+    # no podemos calcular el tiempo entre peticiones del mismo usuario.
+    # Se utilizarán las pausas por defecto configuradas en main.py.
+    if "session_id" not in df.columns or df["session_id"].isna().all():
+        return {}
+
     steps = get_steps(df)
 
     # Hora de la siguiente petición de la misma sesión (igual que next_key, pero con la hora)
     steps["next_timestamp"] = steps.groupby("session_id")["timestamp"].shift(-1)
 
-    # Pausa = hora de la siguiente - hora de esta, en milisegundos, entre 0 y max_ms
-    steps["gap_ms"] = (steps["next_timestamp"] - steps["timestamp"]).dt.total_seconds() * 1000
-    steps["gap_ms"] = steps["gap_ms"].clip(lower=0, upper=max_ms)
+    # Diferencia temporal entre peticiones consecutivas
+    steps["gap_ms"] = (
+        steps["next_timestamp"] - steps["timestamp"]
+    ).dt.total_seconds() * 1000
+
+    # Corregir la pausa según el significado del timestamp
+    if "duration_ms" in steps.columns and "timestamp_kind" in steps.columns:
+
+        # Sustituir duraciones infinitas por valores ausentes
+        duration = (
+            steps["duration_ms"]
+            .replace([np.inf, -np.inf], np.nan)
+            .clip(lower=0)
+            .fillna(0)
+        )
+
+        next_duration = duration.groupby(
+            steps["session_id"]
+        ).shift(-1).fillna(0)
+
+        next_kind = steps.groupby(
+            "session_id"
+        )["timestamp_kind"].shift(-1)
+
+        # Si el timestamp actual es de inicio,
+        # descontar la duración de la petición actual.
+        steps.loc[
+            steps["timestamp_kind"] == "start", "gap_ms"
+        ] -= duration
+
+        # Si el timestamp siguiente es de final,
+        # descontar la duración de la petición siguiente.
+        steps.loc[
+            next_kind == "end", "gap_ms"
+        ] -= next_duration
+
+    # Limitar las pausas al intervalo permitido
+    steps["gap_ms"] = steps["gap_ms"].clip(
+        lower=0, upper=max_ms
+    )
 
     # La última petición de cada sesión no tiene pausa
     pairs = steps.dropna(subset=["next_key"])
@@ -43,15 +87,34 @@ def build_think_times(df, samples=20, max_ms=120_000):
     return think_times
 
 
-def add_default_pauses(think_times, model, default_pause_ms=DEFAULT_PAUSE_MS):
-    """Pone la pausa por defecto en las transiciones del modelo que no tienen pausas de los logs:
-    todas si no hay logs, y las que añade el .jar (p. ej. un endpoint que nadie ha usado)."""
-    for source, targets in model["transitions"].items():
+def add_default_pauses(
+    think_times,
+    model,
+    default_pause_ms=DEFAULT_PAUSE_MS
+):
+    """Añade pausas por defecto a las transiciones sin tiempos observados,
+    tanto generales como condicionadas al código HTTP.
+    """
+
+    def add_pauses(source, targets):
         for target in targets:
+
             if target == END:
                 continue
+
             if source not in think_times:
                 think_times[source] = {}
+
             if target not in think_times[source]:
                 think_times[source][target] = list(default_pause_ms)
+
+    # Transiciones generales
+    for source, targets in model["transitions"].items():
+        add_pauses(source, targets)
+
+    # Transiciones condicionadas al código HTTP
+    for source, statuses in model.get("status_transitions", {}).items():
+        for status, targets in statuses.items():
+            add_pauses(source, targets)
+
     return think_times
