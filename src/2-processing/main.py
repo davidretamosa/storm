@@ -13,6 +13,7 @@ import numpy as np
 from jar_parser.parser import compare_with_logs, parse_jar, read_jar_classes
 from jmx_generator.generator import generate_jmx
 from log_parser.parser import parse_logs
+from traffic_model.body_rules import hide_unique_values, learn_body_rules
 from traffic_model.correlation import build_correlation
 from traffic_model.dto_bodies import add_dto_bodies
 from traffic_model.markov import build_markov_model
@@ -57,7 +58,8 @@ def main() -> None:
     )
     args.add_argument("--realistic-bodies", action="store_true",
                       help="cuerpos JSON realistas (capa de IA): el modelo de los bodies sale solo de las peticiones 2xx; "
-                           "con --jar, las peticiones sin campos en los logs salen del DTO")
+                           "con --jar, las peticiones sin campos en los logs salen del DTO; "
+                           "aprende cuantiles, campos distintos y campos únicos")
     opts = args.parse_args()
 
     if not opts.logs and not opts.jar:
@@ -116,6 +118,14 @@ def main() -> None:
     if opts.realistic_bodies and opts.jar:
         replaced, dto_unique = add_dto_bodies(bodies, df_logs, endpoints, read_jar_classes(opts.jar))
         print(f"Bodies realistas: {len(replaced)} peticiones con el body del DTO del .jar.")
+    body_rules = None
+    if opts.realistic_bodies:
+        body_rules = learn_body_rules(df_logs, bodies, dto_unique)
+        hide_unique_values(bodies, body_rules)
+        print(f"Bodies realistas: reglas en {len(body_rules)} peticiones "
+              f"({sum(1 for r in body_rules.values() if r['numbers'])} con cuantiles, "
+              f"{sum(1 for r in body_rules.values() if r['different'])} con campos distintos, "
+              f"{sum(1 for r in body_rules.values() if r['unique'])} con campos únicos).")
     profile = predict_traffic_scale(df_logs)
     correlation = build_correlation(model, bodies)
     print(f"{len(model['states'])} estados en la cadena de Markov; {profile['vusers']} usuarios virtuales.")

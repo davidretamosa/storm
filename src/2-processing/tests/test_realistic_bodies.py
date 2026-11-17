@@ -20,6 +20,9 @@ import pytest
 from jar_parser.class_file import Reader, read_constant_pool, read_element_value
 from jar_parser.parser import parse_jar, read_jar_classes
 from log_parser.parser import COLUMNS, parse_logs
+from traffic_model.body_rules import (MIN_EXPECTED_MATCHES, MIN_UNIQUE_VALUES, bodies_by_request, different_pairs,
+                                     expected_matches, hide_unique_values, is_number, learn_body_rules,
+                                     numeric_quantiles, quantile_table, text_form, unique_fields)
 from traffic_model.dto_bodies import (add_dto_bodies, dto_body, fixed_value, number_range, text_model,
                                       unique_names)
 from traffic_model.payloads import build_body_models
@@ -423,7 +426,7 @@ def test_dto_values_are_synthetic(classes):
 
 def test_new_modules_know_nothing_of_the_bankapp():
     # El T-3.3 y el T-3.4 añaden aquí sus archivos
-    paths = [ROOT / "traffic_model" / "dto_bodies.py"]
+    paths = [ROOT / "traffic_model" / "dto_bodies.py", ROOT / "traffic_model" / "body_rules.py"]
     assert app_terms(paths) == []
 
 
@@ -458,3 +461,271 @@ def test_main_with_the_flag_and_the_jar(tmp_path):
     linked = plan_model(generate(["--logs", reference, "--session", "--jar", JAR, "--realistic-bodies"],
                                  tmp_path / "linked.jmx"))
     assert linked["correlation"]["body_resources"]["POST /api/accounts"]["userId"] == "/api/users"
+
+
+# ---------------------------------------------------------------------------
+# Sección 3 · reglas (T-3.3): cuantiles, «distinto» y «único», aprendidos de las 2xx
+# ---------------------------------------------------------------------------
+
+ITEMS = "POST /items"
+REFERENCE = Path(__file__).parents[1] / "bench/data/bankapp_vall_pic_3h.jsonl"   # solo lectura
+
+
+def items(bodies, status=201):
+    """DataFrame con un POST /items por body."""
+    return frame([row(status, body, endpoint="/items") for body in bodies])
+
+
+def never_equal(count):
+    """`count` bodies con sourceId y targetId en {1, 2, 3}, nunca iguales (cada valor sale igual de a menudo)."""
+    pairs = [(1, 2), (2, 3), (3, 1), (2, 1), (3, 2), (1, 3)]
+    return [{"sourceId": pairs[i % 6][0], "targetId": pairs[i % 6][1]} for i in range(count)]
+
+
+def test_quantile_table_goes_from_min_to_max():
+    values = [7, 1.5, 3, 9.25, 4, 4, 2]
+    table = quantile_table(values)
+    assert len(table) == 21
+    assert table == sorted(table)
+    assert table[0] == 1.5 and table[-1] == 9.25
+    precise = [1 / 3, 2 / 7, 5 / 9, 0.123456789]
+    assert quantile_table(precise) == [round(float(q), 6) for q in np.quantile(precise, np.linspace(0, 1, 21))]
+    assert quantile_table(precise)[10] == 0.309524            # mediana por interpolación lineal, 6 decimales
+
+
+def test_quantiles_come_only_from_successful_requests():
+    # Control positivo del filtro: los retiros con 400 de access_sample.log llevan los importes grandes
+    df = parse_logs(LOG)
+    rules = learn_body_rules(df, build_body_models(df, only_2xx=True))
+    table = rules[WITHDRAW]["numbers"]["amount"]["q"]
+    assert table[-1] == 188.05
+    assert 4917.51 not in table
+
+
+def test_quantiles_only_for_number_fields():
+    bodies = [{"sourceId": i % 3 + 1, "size": i * 1.5, "mixed": i if i % 2 else "x"} for i in range(10)]
+    fields = build_body_models(items(bodies))[ITEMS]
+    assert fields["sourceId"]["type"] == "choice" and fields["mixed"]["type"] == "choice"
+    result = numeric_quantiles(bodies, fields)
+    assert list(result) == ["size"]
+    assert result["size"]["decimals"] == fields["size"]["decimals"]
+    assert is_number(3) and is_number(2.5) and not is_number(True) and not is_number("3")
+    mixed = frame([row(201, {"a": 1}, endpoint="/items"), row(201, [1, 2], endpoint="/items"),
+                   row(201, None, endpoint="/items"), row(201, "texto", endpoint="/other")])
+    assert bodies_by_request(mixed) == {ITEMS: [{"a": 1}]}
+
+
+def test_different_is_learned_when_chance_would_make_them_equal():
+    bodies = never_equal(30)
+    assert expected_matches([b["sourceId"] for b in bodies], [b["targetId"] for b in bodies]) == pytest.approx(10)
+    assert different_pairs(bodies) == [["sourceId", "targetId"]]
+    # Solo cuentan los bodies que llevan los dos campos con valor: dos null no son una coincidencia
+    padded = bodies + [{"sourceId": None, "targetId": None}, {"sourceId": 1}, {"targetId": 1}]
+    assert different_pairs(padded) == [["sourceId", "targetId"]]
+    # true no es 1: no es una coincidencia
+    assert different_pairs(bodies + [{"sourceId": True, "targetId": 1}]) == [["sourceId", "targetId"]]
+
+
+def test_different_is_not_learned_when_they_sometimes_match():
+    # Control negativo: los mismos bodies, con 2 iguales
+    bodies = never_equal(30)
+    bodies[0] = {"sourceId": 1, "targetId": 1}
+    bodies[1] = {"sourceId": 2, "targetId": 2.0}     # 2 y 2.0 cuentan como iguales
+    assert different_pairs(bodies) == []
+    # Una sola coincidencia basta, y 2 y 2.0 son iguales
+    once = never_equal(30)
+    once[1] = {"sourceId": 2, "targetId": 2.0}
+    assert different_pairs(once) == []
+
+
+def test_different_needs_enough_evidence():
+    bodies = never_equal(6)
+    assert expected_matches([b["sourceId"] for b in bodies], [b["targetId"] for b in bodies]) < 5
+    assert different_pairs(bodies) == []
+    # El umbral es «al menos 5»: con 15 parejas uniformes en {1, 2, 3} se esperan 5, con 12 se esperan 4
+    assert MIN_EXPECTED_MATCHES == 5
+    cycle = [(1, 2), (2, 3), (3, 1)]
+    five = [{"sourceId": cycle[i % 3][0], "targetId": cycle[i % 3][1]} for i in range(15)]
+    four = five[:12]
+    assert expected_matches([b["sourceId"] for b in five], [b["targetId"] for b in five]) == pytest.approx(5)
+    assert different_pairs(five) == [["sourceId", "targetId"]]
+    assert different_pairs(four) == []
+
+
+def test_different_ignores_fields_that_never_share_values():
+    bodies = [{"sourceId": 1 + i % 2, "targetId": 7 + i % 2} for i in range(30)]
+    assert different_pairs(bodies) == []
+
+
+def test_different_only_looks_at_id_fields():
+    bodies = [{"size": b["sourceId"], "weight": b["targetId"]} for b in never_equal(30)]
+    assert different_pairs(bodies) == []
+
+
+def test_different_works_with_other_names():
+    bodies = [{"srcId": b["sourceId"], "note": "x", "dstId": b["targetId"]} for b in never_equal(30)]
+    assert different_pairs(bodies) == [["srcId", "dstId"]]
+
+
+def test_unique_learns_the_form_without_copying_values():
+    codes = [f"ref-{i:03d}k{i * 7 % 10}" for i in range(25)]
+    df = items([{"code": code, "size": i} for i, code in enumerate(codes)])
+    bodies = build_body_models(df)
+    before = copy.deepcopy(bodies)
+    rules = learn_body_rules(df, bodies)
+    assert bodies == before                                  # learn_body_rules no cambia el modelo
+    assert rules[ITEMS]["unique"] == {"code": {"prefix": "ref-0", "suffix": ""}}
+    text = json.dumps(rules)
+    assert not [code for code in codes if code in text]
+
+
+def test_unique_needs_enough_values_and_no_repeats():
+    assert MIN_UNIQUE_VALUES == 20
+
+    def bodies(count):
+        return [{"code": f"c{i}"} for i in range(count)]
+
+    assert unique_fields(bodies(19)) == {}
+    assert unique_fields(bodies(20)) == {"code": {"prefix": "c", "suffix": ""}}
+    repeated = bodies(20)
+    repeated[19] = {"code": "c0"}
+    assert unique_fields(repeated) == {}
+    empty = bodies(20)
+    empty[5] = {"code": ""}
+    assert unique_fields(empty) == {}
+    # Se cuentan los valores del campo, no los bodies
+    assert unique_fields(bodies(19) + [{"other": 1}] * 6) == {}
+
+
+def test_unique_leaves_id_fields_alone():
+    bodies = [{"sourceId": f"s-{i}", "code": f"c-{i}"} for i in range(25)]
+    assert list(unique_fields(bodies)) == ["code"]
+
+
+def test_text_form():
+    assert text_form(["ana1@x.test", "pere7@x.test"]) == {"prefix": "storm-", "suffix": "@x.test"}
+    assert text_form(["ref-001", "ref-002"]) == {"prefix": "ref-00", "suffix": ""}
+    assert text_form(["${a}1", "${a}2"]) == {"prefix": "storm-", "suffix": ""}
+    assert text_form(["a1${b}", "c2${b}"])["suffix"] == ""
+    # Con @ en los textos pero no en el sufijo común, el sufijo queda vacío
+    assert text_form(["a@x.test9", "b@y.test9"]) == {"prefix": "storm-", "suffix": ""}
+    # El principio común es el de todos, aunque no vengan ordenados
+    assert text_form(["ref-002", "abc", "ref-001"])["prefix"] == "storm-"
+    # El sufijo no se solapa con el prefijo
+    assert text_form(["ab", "abab"]) == {"prefix": "ab", "suffix": ""}
+    assert text_form(["x${a}1", "x${a}2"])["prefix"] == "storm-"
+
+
+def test_dto_unique_forms_join_the_rules():
+    form = {"prefix": "storm.", "suffix": "@example.com", "max": 40}
+    bodies = {"POST /signup": {"contact": {"type": "choice", "values": [["storm.storm@example.com", 1.0]],
+                                           "presence": 1.0}}}
+    dto_unique = {"POST /signup": {"contact": form}, "POST /missing": {"contact": form}}
+    rules = learn_body_rules(None, bodies, dto_unique)
+    assert rules == {"POST /signup": {"numbers": {}, "different": [], "unique": {"contact": form}}}
+    # Sin log, y con un log sin ningún body de esa petición, lo mismo
+    assert learn_body_rules(items(never_equal(2)), bodies, dto_unique)["POST /signup"] == rules["POST /signup"]
+    rules["POST /signup"]["unique"]["contact"]["max"] = 5
+    assert form["max"] == 40                                 # las reglas llevan una copia de la forma
+    # Si el log ya enseña que un campo es único, manda la forma del log
+    codes = frame([row(201, {"code": f"ref-{i:02d}"}, endpoint="/signup") for i in range(20)])
+    joined = learn_body_rules(codes, build_body_models(codes), {"POST /signup": {"code": form}})
+    assert joined["POST /signup"]["unique"] == {"code": {"prefix": "ref-", "suffix": ""}}
+
+
+def test_rules_with_jmeter_expressions_are_dropped():
+    bodies = [{"a${x}Id": b["sourceId"], "targetId": b["targetId"]} for b in never_equal(30)]
+    clean = [{"sourceId": b["sourceId"], "targetId": b["targetId"]} for b in never_equal(30)]
+    df = frame([row(201, body, endpoint="/items") for body in bodies]
+               + [row(201, body, endpoint="/other") for body in clean])
+    assert different_pairs(bodies) == [["a${x}Id", "targetId"]]
+    rules = learn_body_rules(df, build_body_models(df))
+    assert ITEMS not in rules
+    assert rules["POST /other"]["different"] == [["sourceId", "targetId"]]
+    # También con el ${ en un campo numérico o en un campo único, y en las formas del DTO (el filtro va al final)
+    tricky = frame([row(201, {"s${x}": i * 1.5}, endpoint="/numbers") for i in range(5)]
+                   + [row(201, {"n${x}": f"t{i}"}, endpoint="/texts") for i in range(25)])
+    assert learn_body_rules(tricky, build_body_models(tricky)) == {}
+    form = {"prefix": "ref-", "suffix": ""}
+    assert learn_body_rules(None, {"POST /x": {"c": {}}}, {"POST /x": {"c${x}": form}}) == {}
+
+
+def test_hide_unique_values():
+    form = {"prefix": "ref-", "suffix": ""}
+    size = {"type": "number", "min": 1, "max": 9, "decimals": 0, "presence": 1.0}
+    bodies = {ITEMS: {"code": {"type": "choice", "values": [["ref-1", 0.5], ["ref-2", 0.5]], "presence": 0.8},
+                      "size": dict(size)}}
+    rules = {ITEMS: {"numbers": {}, "different": [], "unique": {"code": form, "absent": form}},
+             "POST /missing": {"numbers": {}, "different": [], "unique": {"code": form}}}
+    hide_unique_values(bodies, rules)
+    assert bodies == {ITEMS: {"code": {"type": "choice", "values": [[fixed_value(form), 1.0]], "presence": 0.8},
+                              "size": size}}
+
+
+def test_rules_on_the_reference_log():
+    df = parse_logs(str(REFERENCE))
+    bodies = build_body_models(df, only_2xx=True)
+    before = copy.deepcopy(bodies)
+    rules = learn_body_rules(df, bodies)
+    assert bodies == before                                  # learn_body_rules no cambia el modelo
+
+    transfers = rules["POST /api/transfers"]
+    assert {tuple(sorted(pair)) for pair in transfers["different"]} == {("fromAccountId", "toAccountId")}
+    rows = [b for b in df[df["endpoint"] == "/api/transfers"]["body"] if isinstance(b, dict)]
+    assert expected_matches([b["fromAccountId"] for b in rows], [b["toAccountId"] for b in rows]) > 100
+
+    ranges = {request: (rule["numbers"]["amount"]["q"][0], rule["numbers"]["amount"]["q"][-1])
+              for request, rule in rules.items()}
+    assert ranges == {"POST /api/accounts/{id}/deposit": (5.70, 493.08),
+                      "POST /api/accounts/{id}/withdraw": (5.06, 39.99),
+                      "POST /api/transfers": (5.33, 49.90)}
+    assert not any(rule["unique"] for rule in rules.values())
+    for request in ("POST /api/users", "POST /api/accounts", "POST /api/sessions"):
+        assert bodies[request] == {} and request not in rules
+
+
+def write_log(path, bodies, endpoint="/items"):
+    """Un log JSON Lines con un POST 201 por body, en 5 sesiones."""
+    lines = []
+    for i, body in enumerate(bodies):
+        lines.append(json.dumps({"timestamp": f"2026-10-01T09:{i // 60:02d}:{i % 60:02d}.000Z",
+                                 "requestId": f"r{i}", "sessionId": f"s{i % 5}", "userId": 1, "method": "POST",
+                                 "endpoint": endpoint, "path": endpoint, "status": 201, "durationMs": 5,
+                                 "body": body}))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def test_unique_log_values_do_not_reach_the_plan(tmp_path):
+    codes = [f"lot-{i:03d}z{i * 3 % 7}" for i in range(25)]
+    log = write_log(tmp_path / "items.jsonl", [{"code": code} for code in codes])
+    off = markov_script(generate(["--logs", str(log)], tmp_path / "off.jmx"))
+    on = markov_script(generate(["--logs", str(log), "--realistic-bodies"], tmp_path / "on.jmx"))
+    assert all(code in off for code in codes)
+    assert not [code for code in codes if code in on]
+    assert fixed_value({"prefix": "lot-0", "suffix": ""}) in on
+
+
+def run_main(args, output):
+    """La salida estándar de `python main.py <args> --output <output>` (PYTHONHASHSEED=0)."""
+    env = {**os.environ, "PYTHONHASHSEED": "0"}
+    command = [sys.executable, "main.py", *args, "--output", str(output)]
+    result = subprocess.run(command, cwd=ROOT, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
+def test_main_prints_the_rules_only_with_the_flag(tmp_path):
+    on = run_main(["--logs", LOG, "--realistic-bodies"], tmp_path / "on.jmx")
+    off = run_main(["--logs", LOG], tmp_path / "off.jmx")
+    assert "Bodies realistas: reglas en" in on
+    assert "Bodies realistas: reglas en" not in off
+    # Dos peticiones: /items con cuantiles y un campo único; /pairs con cuantiles y dos campos distintos
+    unique = write_log(tmp_path / "unique.jsonl", [{"code": f"c{i}", "size": i} for i in range(25)])
+    pairs = write_log(tmp_path / "pairs.jsonl", [{"sourceId": 1 + i % 2, "targetId": 2 - i % 2, "size": i}
+                                                 for i in range(25)], endpoint="/pairs")
+    log = tmp_path / "both.jsonl"
+    log.write_text(unique.read_text(encoding="utf-8") + pairs.read_text(encoding="utf-8"), encoding="utf-8")
+    counts = run_main(["--logs", str(log), "--realistic-bodies"], tmp_path / "both.jmx")
+    assert ("Bodies realistas: reglas en 2 peticiones (2 con cuantiles, 1 con campos distintos, "
+            "1 con campos únicos).") in counts
