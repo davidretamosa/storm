@@ -1,8 +1,9 @@
-"""Grupos de visita (--visit-groups): la tabla de cada sesión, el KMeans y el plan (T-2.1), y las tres reglas
-que juntan y validan los grupos (T-2.2).
+"""Grupos de visita (--visit-groups): la tabla de cada sesión, el KMeans y el plan (T-2.1), las tres reglas
+que juntan y validan los grupos (T-2.2) y el modelo de cada grupo (T-2.3).
 
 Los logs sintéticos usan endpoints inventados (/a, /b...): la mejora no sabe nada de ninguna app.
 """
+import copy
 import json
 import math
 import os
@@ -20,11 +21,13 @@ import sklearn.metrics
 from bench.tests.support import BANKAPP, JAR, ROOT, generate, sha256
 from log_parser.parser import parse_logs
 from traffic_model import visit_groups
-from traffic_model.markov import END
+from traffic_model.markov import END, build_markov_model, build_status_transitions
+from traffic_model.think_time import DEFAULT_PAUSE_MS, add_default_pauses, build_think_times
 from traffic_model.visit_groups import (
-    CREATES, FLOOR, FOLDS, LENGTH, MAX_GROUPS, MIN_GROUP, PAUSE, RATE_4XX, SAME_NAVIGATION, SEED, START,
-    cluster_sessions, describe, find_visit_groups, group_labels, heldout_gain, js_distance, log_likelihood,
-    merge_alike, navigation, session_table, split,
+    CREATES, FLOOR, FOLDS, LENGTH, MAX_GROUPS, MIN_GROUP, MIN_STATUS_CASES, PAUSE, RATE_4XX, SAME_NAVIGATION,
+    SEED, START, build_group_models, cluster_sessions, describe, describe_models, find_visit_groups,
+    group_labels, heldout_gain, js_distance, keep_frequent_statuses, log_likelihood, merge_alike, navigation,
+    session_table, split, status_cases,
 )
 
 T0 = datetime(2026, 10, 1, 9, 0, tzinfo=timezone.utc)
@@ -689,3 +692,274 @@ def test_gate_decides_by_the_mean(tmp_path, monkeypatch):
             assert len(set(groups.values())) == 2 and "one_group" not in report
         else:
             assert set(groups.values()) == {0} and report["one_group"] == gate_text()
+
+
+# --- Un modelo por grupo (T-2.3) --------------------------------------------------------------------
+
+PLAIN_CHAIN = {"min_probability": 0.0, "endpoints": None, "jar_weight": 1}   # los argumentos por defecto de main.py
+FIVE_KEYS = {"weight", "start", "transitions", "status_transitions", "think_time_ms"}
+
+
+def two_kinds_same_status(reading=30, writing=30, status=200):
+    """`reading` lectores (GET /a -> GET /b) y `writing` que hacen GET /a -> POST /c -> GET /b -> POST /d, todos con
+    el mismo código y alternados como two_kinds() (los que sobran, al final). Con 30 y 30, después de GET /a con 200
+    la cadena general da GET /b 0,5 y POST /c 0,5: el código no separa los dos tipos."""
+    readers_ = [visit(["GET /a", "GET /b"], 2 + n % 3, status=status) for n in range(reading)]
+    writers_ = [visit(["GET /a", "POST /c", "GET /b", "POST /d"], 3 + n % 4, status=status) for n in range(writing)]
+    both = min(reading, writing)
+    rest = readers_[both:] + writers_[both:]
+    return [s for pair in zip(readers_, writers_) for s in pair] + rest
+
+
+def same_status_df(tmp_path, name="same.jsonl", without_id=(), **kinds):
+    return parse_logs(write_log(tmp_path / name, two_kinds_same_status(**kinds), without_id=without_id))
+
+
+def by_hand(df, reading=15):
+    """Los grupos hechos a mano: los `reading` lectores (s0, s2, ...) en el grupo 1 y los demás en el 0."""
+    readers_ = {f"s{n}" for n in range(0, 2 * reading, 2)}
+    return {session: int(session in readers_) for session in df["session_id"].dropna().unique()}
+
+
+def test_status_cases_count_like_the_chain(tmp_path):
+    """Los casos de cada pareja (estado, código) se cuentan como en build_status_transitions: mismas claves."""
+    df = same_status_df(tmp_path)
+    cases = status_cases(df)
+    assert cases["GET /a"]["200"] == 60
+    assert cases["POST /c"]["200"] == 30
+    chain = build_status_transitions(df)
+    assert set(cases) == set(chain)
+    assert all(set(cases[state]) == set(chain[state]) for state in chain)
+
+    # Varios códigos, filas sin status (no cuentan) y una sesión sin sessionId (no cuenta)
+    sessions = [[("GET", "/a", 200, 0), ("GET", "/a", 404, 1), ("POST", "/b", None, 2)]] * 4
+    df = parse_logs(write_log(tmp_path / "mixed.jsonl", sessions, without_id=[3]))
+    assert status_cases(df) == {"GET /a": {"200": 3, "404": 3}}
+    chain = build_status_transitions(df)
+    assert set(chain) == {"GET /a"} and set(chain["GET /a"]) == {"200", "404"}
+
+    # Sin sesiones, sin status o sin log: nada
+    assert status_cases(None) == {}
+    no_ids = two_kinds_same_status(4, 4)
+    assert status_cases(parse_logs(write_log(tmp_path / "no_ids.jsonl", no_ids, without_id=range(8)))) == {}
+    assert status_cases(same_status_df(tmp_path, "no_status.jsonl", reading=4, writing=4, status=None)) == {}
+    assert status_cases(df.drop(columns="status")) == {}
+
+
+def test_keep_frequent_statuses_boundary():
+    """19 casos no bastan y 20 sí; un estado sin ningún código no sale; el diccionario recibido no cambia."""
+    assert MIN_STATUS_CASES == 20
+    transitions = {"GET /a": {"200": {"GET /b": 0.7, END: 0.3}, "404": {END: 1.0}},
+                   "GET /b": {"500": {END: 1.0}},
+                   "GET /c": {"200": {END: 1.0}}}
+    cases = {"GET /a": {"200": 20, "404": 19}, "GET /b": {"500": 3}}     # GET /c no tiene casos: 0
+    before = copy.deepcopy(transitions)
+
+    kept = keep_frequent_statuses(transitions, cases)
+    assert kept == {"GET /a": {"200": {"GET /b": 0.7, END: 0.3}}}
+    assert transitions == before
+    kept["GET /a"]["200"]["GET /b"] = 0          # el nuevo no comparte nada con el que recibe
+    assert transitions == before
+
+    every = keep_frequent_statuses(transitions, cases, min_cases=19)
+    assert every == {"GET /a": {"200": {"GET /b": 0.7, END: 0.3}, "404": {END: 1.0}}}
+    every["GET /a"]["999"] = {}                  # tampoco comparte el diccionario del estado (aquí se quedan todos)
+    every["GET /a"]["404"][END] = 0
+    every["otro"] = {}
+    assert transitions == before
+    assert keep_frequent_statuses(transitions, {}) == {}
+    assert keep_frequent_statuses({}, cases) == {}
+
+
+def test_group_status_transitions_are_the_groups_own(tmp_path):
+    """El problema del 16-17: cada grupo lleva sus transiciones por código, no las generales."""
+    df = same_status_df(tmp_path)
+    groups, report = find_visit_groups(df, PLAIN_CHAIN)
+    assert report["sizes"] == [30, 30], report
+    assert {s for s, g in groups.items() if g == groups["s0"]} == {f"s{n}" for n in range(0, 60, 2)}
+
+    model = build_markov_model(df)
+    parts = build_group_models(df, groups, model, PLAIN_CHAIN, DEFAULT_PAUSE_MS)
+    reading, writing = parts[groups["s0"]], parts[groups["s1"]]
+    assert reading["status_transitions"]["GET /a"]["200"] == {"GET /b": 1.0}
+    assert writing["status_transitions"]["GET /a"]["200"] == {"POST /c": 1.0}
+    assert model["status_transitions"]["GET /a"]["200"] == {"GET /b": 0.5, "POST /c": 0.5}
+
+
+def test_small_group_falls_back_to_its_general(tmp_path):
+    """Un grupo de 15 lectores no llega a 20 casos: sin transiciones por código, usa sus transiciones generales,
+    que son las suyas (después de GET /a, solo GET /b). Con 20 lectores, ya llevan las suyas."""
+    df = same_status_df(tmp_path, reading=15)
+    model = build_markov_model(df)
+    parts = build_group_models(df, by_hand(df), model, PLAIN_CHAIN, DEFAULT_PAUSE_MS)
+    assert parts[1]["status_transitions"] == {}
+    assert parts[1]["start"] == {"GET /a": 1.0}
+    assert parts[1]["transitions"] == {"GET /a": {"GET /b": 1.0}, "GET /b": {END: 1.0}}
+    assert set(model["transitions"]["GET /a"]) == {"GET /b", "POST /c"}       # la general de todos, no la suya
+    assert parts[0]["status_transitions"]["GET /a"]["200"] == {"POST /c": 1.0}  # 30 casos: se queda
+
+    df = same_status_df(tmp_path, "twenty.jsonl", reading=20)
+    parts = build_group_models(df, by_hand(df, 20), build_markov_model(df), PLAIN_CHAIN, DEFAULT_PAUSE_MS)
+    assert parts[1]["status_transitions"]["GET /a"] == {"200": {"GET /b": 1.0}}
+
+    # El inicio también es el del grupo: si los lectores empiezan por GET /e, el suyo es solo GET /e
+    sessions = [[("GET", "/e", 200, 0), ("GET", "/b", 200, 2)] if n % 2 == 0 and n < 30 else s
+                for n, s in enumerate(two_kinds_same_status(reading=15))]
+    df = parse_logs(write_log(tmp_path / "starts.jsonl", sessions))
+    model = build_markov_model(df)
+    parts = build_group_models(df, by_hand(df), model, PLAIN_CHAIN, DEFAULT_PAUSE_MS)
+    assert parts[1]["start"] == {"GET /e": 1.0}
+    assert parts[0]["start"] == {"GET /a": 1.0}
+    assert model["start"] == pytest.approx({"GET /a": 30 / 45, "GET /e": 15 / 45})
+
+    # Los casos se cuentan sobre las peticiones, antes de la poda: 20 lectores en los que uno se va después de
+    # GET /a (END 0,05, que --min-probability 0.1 quita) siguen teniendo 20 casos de GET /a con 200
+    sessions = two_kinds_same_status(reading=20)
+    sessions[0] = visit(["GET /a"], 2)
+    df = parse_logs(write_log(tmp_path / "pruned.jsonl", sessions))
+    chain = {**PLAIN_CHAIN, "min_probability": 0.1}
+    model = build_markov_model(df, 0.1)
+    parts = build_group_models(df, by_hand(df, 20), model, chain, DEFAULT_PAUSE_MS)
+    assert status_cases(df[df["session_id"].isin({f"s{n}" for n in range(0, 40, 2)})])["GET /a"] == {"200": 20}
+    assert parts[1]["status_transitions"]["GET /a"] == {"200": {"GET /b": 1.0}}
+
+
+@pytest.mark.parametrize("min_probability, endpoints, jar_weight, max_steps, pause", [
+    (0.0, None, 1, 50, DEFAULT_PAUSE_MS),
+    (0.05, [{"method": "GET", "endpoint": "/a"}, {"method": "GET", "endpoint": "/z"}], 3, 7, [0]),
+    (0.0, [{"method": "GET", "endpoint": "/a"}, {"method": "GET", "endpoint": "/z"}], 3, 7, [0]),
+], ids=["defecto", "jar", "jar-sin-poda"])
+def test_group_models_are_the_chain_on_group_sessions(tmp_path, min_probability, endpoints, jar_weight, max_steps,
+                                                       pause):
+    """Cada grupo es la cadena de main.py (build_markov_model + build_think_times + add_default_pauses) con los
+    argumentos del plan, sobre las sesiones del grupo."""
+    df = same_status_df(tmp_path)
+    chain = {"min_probability": min_probability, "endpoints": endpoints, "jar_weight": jar_weight}
+    groups, _ = find_visit_groups(df, chain)
+    model = build_markov_model(df, min_probability, max_steps, endpoints=endpoints, jar_weight=jar_weight)
+    parts = build_group_models(df, groups, model, chain, pause)
+    assert len(parts) == len(set(groups.values())) == 2
+
+    for number, part in enumerate(parts):
+        df_group = df[df["session_id"].isin({s for s, g in groups.items() if g == number})]
+        expected = build_markov_model(df_group, min_probability, max_steps, endpoints=endpoints, jar_weight=jar_weight)
+        assert part["start"] == expected["start"]
+        assert part["transitions"] == expected["transitions"]
+        assert part["think_time_ms"] == add_default_pauses(build_think_times(df_group), expected, pause)
+        assert part["status_transitions"] == keep_frequent_statuses(expected["status_transitions"],
+                                                                    status_cases(df_group))
+        if endpoints:
+            # El .jar llega a cada grupo, y GET /z (que nadie usa) lleva la pausa por defecto
+            assert part["transitions"]["GET /z"] == pytest.approx({"GET /a": 1 / 3, "GET /z": 1 / 3, END: 1 / 3})
+            assert part["think_time_ms"]["GET /z"] == {"GET /a": [0], "GET /z": [0]}
+            assert part["transitions"]["GET /a"] != parts[1 - number]["transitions"]["GET /a"]
+            if min_probability == 0:
+                # Sin poda se ve el peso del .jar: 3 casos inventados a partes iguales entre GET /a, GET /z y END,
+                # más los 30 del grupo después de GET /a
+                assert part["transitions"]["GET /a"]["GET /z"] == pytest.approx(1 / 33)
+
+
+def test_every_group_has_the_five_keys(tmp_path):
+    """Las cinco claves siempre, también con status_transitions vacío (si faltara, el grupo heredaría las
+    generales en el T-2.4)."""
+    for name, status in (("with.jsonl", 200), ("without.jsonl", None)):
+        df = same_status_df(tmp_path, name, reading=15, status=status)
+        parts = build_group_models(df, by_hand(df), build_markov_model(df), PLAIN_CHAIN, DEFAULT_PAUSE_MS)
+        assert len(parts) == 2
+        for part in parts:
+            assert set(part) == FIVE_KEYS
+        assert parts[1]["status_transitions"] == {}
+        if status is None:
+            assert parts[0]["status_transitions"] == {}
+
+
+def test_weights_sum_to_one_and_match_sizes(tmp_path):
+    """Cada peso es la parte de las sesiones agrupadas que tiene su grupo; las filas sin sesión no cuentan."""
+    df = same_status_df(tmp_path, reading=15)
+    parts = build_group_models(df, by_hand(df), build_markov_model(df), PLAIN_CHAIN, DEFAULT_PAUSE_MS)
+    assert [part["weight"] for part in parts] == pytest.approx([30 / 45, 15 / 45])
+    assert sum(part["weight"] for part in parts) == pytest.approx(1)
+
+    # Log mixto: la última sesión (un creador) va sin sessionId y no entra en ningún grupo ni en los pesos
+    df = same_status_df(tmp_path, "mixed.jsonl", reading=15, without_id=[44])
+    groups = by_hand(df)
+    assert len(groups) == 44
+    parts = build_group_models(df, groups, build_markov_model(df), PLAIN_CHAIN, DEFAULT_PAUSE_MS)
+    assert [part["weight"] for part in parts] == pytest.approx([29 / 44, 15 / 44])
+    assert sum(part["weight"] for part in parts) == pytest.approx(1)
+    for number, part in enumerate(parts):
+        alone = build_markov_model(df[df["session_id"].isin({s for s, g in groups.items() if g == number})])
+        assert part["start"] == alone["start"] == {"GET /a": 1.0}
+        assert part["transitions"] == alone["transitions"]
+
+    df = same_status_df(tmp_path, "even.jsonl")
+    groups, report = find_visit_groups(df, PLAIN_CHAIN)
+    parts = build_group_models(df, groups, build_markov_model(df), PLAIN_CHAIN, DEFAULT_PAUSE_MS)
+    assert [part["weight"] for part in parts] == [size / sum(report["sizes"]) for size in report["sizes"]]
+
+
+def test_group_states_must_fit_the_global_model(tmp_path, monkeypatch):
+    """Un grupo con un estado que el modelo general no tiene es un error (el Switch del plan es uno solo)."""
+    df = same_status_df(tmp_path, reading=15)
+    groups = by_hand(df)
+    model = build_markov_model(df)
+    build_group_models(df, groups, model, PLAIN_CHAIN, DEFAULT_PAUSE_MS)      # sin error
+    for number in (0, 1):
+        df_group = df[df["session_id"].isin({s for s, g in groups.items() if g == number})]
+        assert set(build_markov_model(df_group)["states"]) <= set(model["states"])
+
+    original = visit_groups.build_markov_model
+
+    def with_a_new_state(*args, **kwargs):
+        result = original(*args, **kwargs)
+        result["states"] = sorted([*result["states"], "GET /nou"])
+        return result
+
+    monkeypatch.setattr(visit_groups, "build_markov_model", with_a_new_state)
+    with pytest.raises(ValueError) as error:
+        build_group_models(df, groups, model, PLAIN_CHAIN, DEFAULT_PAUSE_MS)
+    assert str(error.value) == ("un grupo tiene estados que no están en el modelo general: "
+                                "el Switch del plan no los encontraría")
+
+
+def test_main_prints_the_group_models(tmp_path, monkeypatch):
+    """main.py con --visit-groups escribe la línea de los modelos debajo de la de los grupos, y les pasa los
+    argumentos del plan; el .jmx todavía no cambia."""
+    log = str(write_log(tmp_path / "log.jsonl", two_kinds_same_status()))
+    env = {**os.environ, "PYTHONHASHSEED": "0"}
+    result = subprocess.run([sys.executable, "main.py", "--logs", log, "--visit-groups",
+                             "--output", str(tmp_path / "grouped.jmx")],
+                            cwd=ROOT, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    first = lines.index("Grupos de visita: 2 (30, 30 sesiones)")
+    assert lines[first + 1] == "  2 modelos de grupo; estados con distribución propia por código (al menos 20 casos): 2, 4"
+    assert sum("modelos de grupo" in line for line in lines) == 1
+    two_codes = {"GET /a": {"200": {END: 1.0}, "404": {END: 1.0}}, "GET /b": {"200": {END: 1.0}}}
+    assert describe_models([{"status_transitions": two_codes}, {"status_transitions": {}}]) == \
+        "2 modelos de grupo; estados con distribución propia por código (al menos 20 casos): 2, 0"
+    assert sha256(generate(["--logs", log], tmp_path / "plain.jmx")) == sha256(tmp_path / "grouped.jmx")
+
+    # Los argumentos que main.py da a build_group_models (en el mismo proceso, con un espía)
+    import runpy
+    seen = []
+    real = visit_groups.build_group_models
+
+    def spy(df, groups, model, chain, default_pause_ms):
+        seen.append((len(df), groups, model["max_steps"], chain, default_pause_ms))
+        return real(df, groups, model, chain, default_pause_ms)
+
+    monkeypatch.setattr(visit_groups, "build_group_models", spy)
+    monkeypatch.chdir(ROOT)
+    monkeypatch.setattr(sys, "argv", ["main.py", "--logs", log, "--visit-groups", "--jar", JAR,
+                                      "--min-probability", "0.05", "--jar-weight", "3", "--max-steps", "7",
+                                      "--default-pause", "0-2", "--output", str(tmp_path / "spy.jmx")])
+    runpy.run_path("main.py", run_name="__main__")
+    assert len(seen) == 1
+    rows, groups, max_steps, chain, pause = seen[0]
+    assert rows == len(parse_logs(log))
+    assert set(groups) == {f"s{n}" for n in range(60)}
+    assert max_steps == 7
+    assert chain["min_probability"] == 0.05 and chain["jar_weight"] == 3
+    assert {(e["method"], e["endpoint"]) for e in chain["endpoints"]}      # los del .jar
+    assert pause == [0, 500, 1000, 1500, 2000]

@@ -12,6 +12,10 @@ Luego se aplican tres reglas, para no quedarse con grupos que no sirven:
    el trozo que queda se mira si los grupos predicen las visitas nuevas mejor que una sola cadena.
    Si de media no lo hacen, queda un solo grupo.
 
+Con más de un grupo, build_group_models() hace un modelo para cada uno (inicio, transiciones, pausas y
+transiciones por código HTTP) con las mismas funciones de la cadena, pero solo con las sesiones del
+grupo. Las transiciones por código solo se guardan si tienen al menos MIN_STATUS_CASES casos.
+
 La función que usa main.py (con --visit-groups) es find_visit_groups(), y describe() es el texto
 que escribe. Si el log no tiene sesiones no se hacen grupos: el plan es el de la cadena.
 """
@@ -22,6 +26,7 @@ import numpy as np
 import pandas as pd
 
 from traffic_model.markov import END, build_markov_model, get_steps
+from traffic_model.think_time import add_default_pauses, build_think_times
 
 SEED = 0                 # semilla fija: el mismo log da siempre los mismos grupos
 MAX_GROUPS = 8           # k de 2 a 8
@@ -32,6 +37,12 @@ MIN_GROUP = 10           # con menos sesiones un grupo no se puede validar
 FOLDS = 5                # trozos de la puerta de validación
 FLOOR = 1e-6             # probabilidad mínima de una transición nunca vista, la misma para todos los modelos
 START = "<inicio>"       # inicio de sesión, para contar los pares (inicio, primera petición)
+
+# Mínimo de casos para que un grupo use su propia distribución por código HTTP (estado, código);
+# con menos, el grupo usa su distribución general. 20 = 5 casos por opción (la regla clásica de la
+# prueba de chi cuadrado) x 4 opciones, el máximo de peticiones siguientes de un estado en el log de
+# referencia. Con 20 casos, el error estándar de cada probabilidad es como mucho 0,11.
+MIN_STATUS_CASES = 20
 
 # Columnas de la tabla que no son peticiones (entre <> para que no choquen con "GET /a")
 LENGTH = "<longitud>"
@@ -338,3 +349,79 @@ def describe(report):
         return f"1 ({report['one_group']}); el plan es el de la cadena"
     sizes = ", ".join(str(size) for size in report["sizes"])
     return f"{len(report['sizes'])} ({sizes} sesiones)"
+
+
+# --- Un modelo por grupo (T-2.3) ---------------------------------------------------------------------
+
+def status_cases(df):
+    """Cuántos casos tiene cada pareja (estado, código HTTP): {estado: {"200": n, ...}}.
+
+    Se cuentan igual que en build_status_transitions (markov.py): las peticiones con sesión y con
+    status, antes de ningún filtro. {} si el log no tiene sesiones o no tiene la columna status.
+    """
+    if not has_sessions(df) or "status" not in df.columns:
+        return {}
+    steps = get_steps(df)
+    steps["next_key"] = steps["next_key"].fillna(END)
+    steps = steps.dropna(subset=["status"])
+    cases = {}
+    for (state, status), n in steps.groupby(["key", "status"]).size().items():
+        cases.setdefault(state, {})[str(int(status))] = int(n)
+    return cases
+
+
+def keep_frequent_statuses(status_transitions, cases, min_cases=MIN_STATUS_CASES):
+    """Un diccionario nuevo con solo las parejas (estado, código) que tienen al menos `min_cases` casos.
+
+    No cambia el que recibe. Un estado que se queda sin ningún código no sale: en JMeter, ese estado usa
+    las transiciones generales del modelo (next_request.groovy), las del grupo cuando el modelo es el suyo.
+    """
+    kept = {}
+    for state, statuses in status_transitions.items():
+        frequent = {status: dict(probabilities) for status, probabilities in statuses.items()
+                    if cases.get(state, {}).get(status, 0) >= min_cases}
+        if frequent:
+            kept[state] = frequent
+    return kept
+
+
+def build_group_models(df, groups, model, chain, default_pause_ms):
+    """Un modelo por grupo, en el orden de los números de grupo (0, 1, ...).
+
+    - df: el df_logs de main.py; groups: el de find_visit_groups; model: el modelo general de main.py;
+    - chain: los argumentos de build_markov_model del plan; default_pause_ms: la pausa por defecto.
+
+    Cada grupo se hace con las mismas funciones y los mismos argumentos que el modelo general de main.py,
+    pero solo con las peticiones de sus sesiones (las que no tienen sesión no entran en ningún grupo).
+    Cada elemento lleva siempre las cinco claves: weight (la parte de sesiones del grupo), start,
+    transitions, status_transitions (solo las parejas con MIN_STATUS_CASES casos o más, {} si no queda
+    ninguna) y think_time_ms. Los estados, los cuerpos, la correlación, la sesión y max_steps no van en el
+    grupo: son los del modelo general.
+    """
+    parts = []
+    for group in sorted(set(groups.values())):
+        members = {session for session, number in groups.items() if number == group}
+        df_group = df[df["session_id"].isin(members)]
+        group_model = build_markov_model(df_group, chain["min_probability"], model["max_steps"],
+                                         endpoints=chain["endpoints"], jar_weight=chain["jar_weight"])
+        think = add_default_pauses(build_think_times(df_group), group_model, default_pause_ms)
+        status = keep_frequent_statuses(group_model["status_transitions"], status_cases(df_group))
+        # El Switch del plan es uno solo, hecho con los estados del modelo general
+        if not set(group_model["states"]) <= set(model["states"]):
+            raise ValueError("un grupo tiene estados que no están en el modelo general: "
+                             "el Switch del plan no los encontraría")
+        parts.append({
+            "weight": len(members) / len(groups),
+            "start": group_model["start"],
+            "transitions": group_model["transitions"],
+            "status_transitions": status,
+            "think_time_ms": think,
+        })
+    return parts
+
+
+def describe_models(parts):
+    """El texto que escribe main.py debajo de "Grupos de visita: ..." cuando hay modelos de grupo."""
+    counts = ", ".join(str(len(part["status_transitions"])) for part in parts)
+    return (f"{len(parts)} modelos de grupo; estados con distribución propia por código "
+            f"(al menos {MIN_STATUS_CASES} casos): {counts}")
