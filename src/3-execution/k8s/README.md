@@ -215,6 +215,39 @@ del escenario queda guardado en InfluxDB (etiqueta `application`).
 | Grafana    | http://localhost:30000/d/lab-jmeter-k8s (admin / admin) |
 | Prometheus | http://localhost:30090                     |
 
+## Botón para parar la prueba desde Grafana
+
+El dashboard incluye el plugin **Button Panel** para enviar `POST /parar` al servicio
+`parada`. `desplegar.sh` instala el plugin y publica el servicio mediante NodePort. El navegador
+envía directamente la petición a ese puerto, por lo que `parada.yaml` permite CORS desde las
+URLs locales de Grafana.
+
+El botón usa `http://localhost:30082/parar` en Docker Desktop y
+`http://localhost:40082/parar` en kind. Para abrir Grafana desde otro host, cambia la URL del
+botón en `grafana/lab-jmeter-k8s.json` y añade el origen exacto de Grafana a `CORS_ORIGEN` en
+`parada.yaml`. El botón envía el motivo `desde grafana`, que aparece en el veredicto. Las
+llamadas a `POST /parar` sin motivo mantienen el motivo por defecto `botón rojo`.
+
+Para comprobar que funciona, durante una prueba mira el estado con
+`kubectl -n lab-jmeter get jobs` y pulsa el botón. La petición devuelve HTTP **202** si inicia
+la parada; el Job debería desaparecer o terminar y los logs de `parada` mostrarán
+`"evento":"parar"` y después `"evento":"fin"`:
+
+```bash
+kubectl -n lab-jmeter logs deploy/parada --since=5m
+kubectl -n lab-jmeter get jobs
+```
+
+`GET http://localhost:30082/estado` distingue una prueba en curso (`estado: "activa"`) de la
+parada anterior (`estado: "terminada"`, `prueba_en_marcha: false`). En kind usa el puerto
+`40082`.
+
+`Failed to fetch` normalmente significa que el navegador no pudo conectar o leer la respuesta
+(no es un código HTTP del servicio). El botón envía el POST sin preflight usando `text/plain`.
+En DevTools → Network, debe aparecer el POST a `/parar`; si no aparece, revisa Console. No
+expongas el NodePort a Internet: cualquiera que pueda alcanzarlo podría parar una prueba; CORS
+no es un mecanismo de autenticación.
+
 ## Qué hay en cada fichero
 
 | Fichero | Qué es |
@@ -227,6 +260,7 @@ del escenario queda guardado en InfluxDB (etiqueta `application`).
 | `influxdb.yaml` | InfluxDB 1.8, base de datos `jmeter` |
 | `prometheus.yaml` | Prometheus y sus permisos para leer el cAdvisor del kubelet |
 | `grafana.yaml` | Grafana con datasources y dashboard ya configurados |
+| `parada.yaml` | Servicio de parada NodePort y permisos Kubernetes |
 | `jmeter-job.yaml` | Una prueba = un Job que ejecuta `plan.jmx` y termina (con `--workers`, hace de master) |
 | `jmeter-workers.yaml` | Workers de JMeter para las pruebas distribuidas (Deployment a 0 réplicas + Service) |
 | `kind/cluster.yaml` | Clúster de 4 nodos con kind para probar el reparto entre máquinas |

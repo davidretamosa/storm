@@ -19,7 +19,7 @@ Variables de entorno (todas opcionales):
   ESPERA_SHUTDOWN  segundos que se espera tras shutdown.sh antes de subir de nivel [45]
   ESPERA_STOPTEST  segundos que se espera tras stoptest.sh antes de borrar el Job  [20]
   TOKEN            si se define, POST /parar exige "Authorization: Bearer <TOKEN>"
-  CORS_ORIGEN      origen de Grafana, si el botón llama desde el navegador
+  CORS_ORIGEN      origen(es) de Grafana, separados por comas, si el botón llama desde el navegador
 
 En local (con tu kubeconfig):  pip install kubernetes  y  python parada.py
 """
@@ -46,7 +46,9 @@ ESPERA_SHUTDOWN = int(os.environ.get("ESPERA_SHUTDOWN", "45"))
 ESPERA_STOPTEST = int(os.environ.get("ESPERA_STOPTEST", "20"))
 PUERTO = int(os.environ.get("PUERTO", "8080"))
 TOKEN = os.environ.get("TOKEN", "")
-CORS_ORIGEN = os.environ.get("CORS_ORIGEN", "")
+CORS_ORIGENES = {
+    origen.strip() for origen in os.environ.get("CORS_ORIGEN", "").split(",") if origen.strip()
+}
 MOTIVO_DEFECTO = "botón rojo"
 
 try:
@@ -205,7 +207,14 @@ def iniciar(motivo):
 def estado():
     with lock:
         info = dict(parada)
-    info["prueba_en_marcha"] = pod_en_marcha() is not None
+    prueba_en_marcha = bool(pod_en_marcha() or job_activo())
+    info["prueba_en_marcha"] = prueba_en_marcha
+    if prueba_en_marcha and info["estado"] != "parando":
+        return {
+            "estado": "activa",
+            "detalle": "hay una prueba de JMeter en marcha",
+            "prueba_en_marcha": True,
+        }
     return info
 
 
@@ -214,8 +223,10 @@ def estado():
 class Parada(BaseHTTPRequestHandler):
 
     def cabeceras_cors(self):
-        if CORS_ORIGEN:
-            self.send_header("Access-Control-Allow-Origin", CORS_ORIGEN)
+        origen = self.headers.get("Origin")
+        if origen and origen in CORS_ORIGENES:
+            self.send_header("Access-Control-Allow-Origin", origen)
+            self.send_header("Vary", "Origin")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
 

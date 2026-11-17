@@ -19,6 +19,9 @@ spec:
       containers:
         - name: grafana
           image: grafana/grafana:latest
+          env:
+            - name: GF_INSTALL_PLUGINS
+              value: cloudspout-button-panel
           ports:
             - containerPort: 3000
           readinessProbe:

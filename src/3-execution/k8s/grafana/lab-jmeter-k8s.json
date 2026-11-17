@@ -611,6 +611,29 @@
         "minVizHeight": 75
       },
       "description": "Memoria que usa ahora cada pod (app de prueba, app objetivo y JMeter), sobre 2 GiB (el límite de la app objetivo). Naranja a partir del 70 %, rojo a partir del 90 %."
+    },
+    {
+      "id": 14,
+      "title": "Parar prueba JMeter",
+      "type": "cloudspout-button-panel",
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 6,
+        "h": 4
+      },
+      "options": {
+        "url": "http://localhost:30082/parar",
+        "method": "POST",
+        "type": "header",
+        "contentType": "text/plain",
+        "payload": "{\"motivo\":\"desde grafana\"}",
+        "isAuth": false,
+        "params": [],
+        "text": "PARAR PRUEBA",
+        "variant": "destructive",
+        "orientation": "center"
+      }
     }
   ],
   "templating": {
