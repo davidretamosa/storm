@@ -1,5 +1,5 @@
 """Grupos de visita (--visit-groups): la tabla de cada sesión, el KMeans y el plan (T-2.1), las tres reglas
-que juntan y validan los grupos (T-2.2) y el modelo de cada grupo (T-2.3).
+que juntan y validan los grupos (T-2.2), el modelo de cada grupo (T-2.3) y el selector de grupo del .jmx (T-2.4).
 
 Los logs sintéticos usan endpoints inventados (/a, /b...): la mejora no sabe nada de ninguna app.
 """
@@ -7,8 +7,10 @@ import copy
 import json
 import math
 import os
+import re
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 
@@ -18,8 +20,11 @@ import pytest
 import sklearn.cluster
 import sklearn.metrics
 
+from bench.jmeter import jmeter_binary
 from bench.tests.support import BANKAPP, JAR, ROOT, generate, sha256
+from jmx_generator.generator import CHUNK, GROUP_KEYS, TEMPLATES_DIR, _groovy_text, generate_jmx
 from log_parser.parser import parse_logs
+from main import pause_range
 from traffic_model import visit_groups
 from traffic_model.markov import END, build_markov_model, build_status_transitions
 from traffic_model.think_time import DEFAULT_PAUSE_MS, add_default_pauses, build_think_times
@@ -334,13 +339,6 @@ def test_plan_without_sessions_is_the_chain_plan(tmp_path):
         assert len(extra) == 1
         assert [line for line in on if line != extra[0] and not line.startswith("SKLEARN")] == \
                [line for line in off if not line.startswith("SKLEARN")]
-
-
-def test_flag_does_not_change_the_plan_yet(tmp_path):
-    """PROVISIONAL (lo borra el T-2.4): con grupos, el .jmx aún no cambia."""
-    plain = generate(["--logs", BANKAPP, "--session"], tmp_path / "plain.jmx")
-    grouped = generate(["--logs", BANKAPP, "--session", "--visit-groups"], tmp_path / "grouped.jmx")
-    assert sha256(plain) == sha256(grouped)
 
 
 # --- Las tres reglas (T-2.2) ------------------------------------------------------------------------
@@ -924,7 +922,7 @@ def test_group_states_must_fit_the_global_model(tmp_path, monkeypatch):
 
 def test_main_prints_the_group_models(tmp_path, monkeypatch):
     """main.py con --visit-groups escribe la línea de los modelos debajo de la de los grupos, y les pasa los
-    argumentos del plan; el .jmx todavía no cambia."""
+    argumentos del plan; con dos grupos, el .jmx lleva el selector de grupo (T-2.4)."""
     log = str(write_log(tmp_path / "log.jsonl", two_kinds_same_status()))
     env = {**os.environ, "PYTHONHASHSEED": "0"}
     result = subprocess.run([sys.executable, "main.py", "--logs", log, "--visit-groups",
@@ -938,7 +936,8 @@ def test_main_prints_the_group_models(tmp_path, monkeypatch):
     two_codes = {"GET /a": {"200": {END: 1.0}, "404": {END: 1.0}}, "GET /b": {"200": {END: 1.0}}}
     assert describe_models([{"status_transitions": two_codes}, {"status_transitions": {}}]) == \
         "2 modelos de grupo; estados con distribución propia por código (al menos 20 casos): 2, 0"
-    assert sha256(generate(["--logs", log], tmp_path / "plain.jmx")) == sha256(tmp_path / "grouped.jmx")
+    assert sha256(generate(["--logs", log], tmp_path / "plain.jmx")) != sha256(tmp_path / "grouped.jmx")
+    assert (tmp_path / "grouped.jmx").read_text(encoding="utf-8").count('testname="Elegir grupo de visita"') == 1
 
     # Los argumentos que main.py da a build_group_models (en el mismo proceso, con un espía)
     import runpy
@@ -963,3 +962,405 @@ def test_main_prints_the_group_models(tmp_path, monkeypatch):
     assert chain["min_probability"] == 0.05 and chain["jar_weight"] == 3
     assert {(e["method"], e["endpoint"]) for e in chain["endpoints"]}      # los del .jar
     assert pause == [0, 500, 1000, 1500, 2000]
+
+
+# --- El selector de grupo del .jmx (T-2.4) ----------------------------------------------------------
+
+PICKER = "Elegir grupo de visita"
+FIRST = "Elegir primera petición"
+NEXT = "Elegir siguiente petición (Markov)"
+REFERENCE = "bench/data/bankapp_vall_pic_3h.jsonl"
+HARNESS = ROOT / "tests" / "visit_groups_walk.groovy"
+JMETER = jmeter_binary()
+needs_jmeter = pytest.mark.skipif(not JMETER.exists(), reason=f"no hay JMeter en {JMETER} (ni en $JMETER_BIN)")
+# Los argumentos de main.py por defecto (--min-probability, --max-steps, --jar-weight y --default-pause)
+MAIN_DEFAULTS = {"min_probability": 0.0, "max_steps": 50, "jar_weight": 1, "default_pause": "1-3"}
+LITERAL = re.compile(r"'''((?:\\.|[^\\'])*)'''")
+JOIN = "].join()"
+
+
+def jsr223_scripts(plan):
+    """El script de cada JSR223 del plan, por su testname."""
+    root = ET.parse(plan).getroot()
+    return {element.get("testname"): element.findtext("stringProp[@name='script']")
+            for element in root.iter() if element.tag.startswith("JSR223")}
+
+
+def unescape(literal):
+    """Lo que vale un literal '''...''' de Groovy escapado como en el generador (\\\\ y \\')."""
+    return re.sub(r"\\(.)", r"\1", literal, flags=re.S)
+
+
+def groovy_value(expression):
+    """El texto que vale una expresión ['''...''', '''...'''].join(): comprueba que no hay nada más."""
+    assert expression.startswith("[") and expression.endswith(JOIN), expression[:80]
+    inner = expression[1:-len(JOIN)]
+    chunks = LITERAL.findall(inner)
+    assert ", ".join(f"'''{chunk}'''" for chunk in chunks) == inner
+    return chunks, "".join(unescape(chunk) for chunk in chunks)
+
+
+def embedded_literal(script):
+    """El literal del modelo general que markov_common.groovy incrusta al principio de cada script."""
+    start = script.index("parseText('''") + len("parseText('''")
+    return script[start:script.index("''')\n    vars.putObject(\"stormModel\", model)")]
+
+
+def embedded_model(script):
+    return json.loads(unescape(embedded_literal(script)))
+
+
+def picker_expression(script):
+    start = script.index("def data = new JsonSlurper().parseText(") + len("def data = new JsonSlurper().parseText(")
+    return script[start:script.index(")\n    def models = data.groups.collect")]
+
+
+def picker_groups(script):
+    """El JSON de los grupos del selector: {"weights": [...], "groups": [...]}."""
+    return json.loads(groovy_value(picker_expression(script))[1])
+
+
+def close(a, b, path="$"):
+    """a y b iguales, con los números a 1e-12."""
+    if isinstance(a, dict):
+        assert isinstance(b, dict) and set(a) == set(b), path
+        for key in a:
+            close(a[key], b[key], f"{path}.{key}")
+    elif isinstance(a, list):
+        assert isinstance(b, list) and len(a) == len(b), path
+        for n, (x, y) in enumerate(zip(a, b)):
+            close(x, y, f"{path}[{n}]")
+    elif isinstance(a, (int, float)) and not isinstance(a, bool):
+        assert isinstance(b, (int, float)) and abs(a - b) <= 1e-12, (path, a, b)
+    else:
+        assert a == b, (path, a, b)
+
+
+def same_status_log(tmp_path, name="same.jsonl", **kinds):
+    return str(write_log(tmp_path / name, two_kinds_same_status(**kinds)))
+
+
+def plans(tmp_path, inputs, name="plan"):
+    """El plan sin --visit-groups y con."""
+    plain = generate(inputs, tmp_path / f"{name}_plain.jmx")
+    grouped = generate([*inputs, "--visit-groups"], tmp_path / f"{name}_grouped.jmx")
+    return plain, grouped
+
+
+def new_session_tree(root):
+    """El hashTree de «Nueva sesión»: el que va justo después del TestAction."""
+    for parent in root.iter():
+        children = list(parent)
+        for n, child in enumerate(children):
+            if child.get("testname") == "Nueva sesión":
+                assert children[n + 1].tag == "hashTree"
+                return children[n + 1]
+    raise AssertionError("el plan no tiene «Nueva sesión»")
+
+
+def walk(plan, folder, sessions, code="200"):
+    """Hace `sessions` visitas con el banco Groovy y los scripts del plan; devuelve walks.jsonl."""
+    scripts = jsr223_scripts(plan)
+    folder.mkdir()
+    for name, testname in (("pick", PICKER), ("start", FIRST), ("next", NEXT)):
+        (folder / f"{name}.groovy").write_text(scripts[testname], encoding="utf-8")
+    lib = JMETER.parent.parent / "lib"
+    result = subprocess.run(["java", "-cp", f"{lib}/*:{lib}/ext/ApacheJMeter_core.jar", "groovy.ui.GroovyMain",
+                             str(HARNESS), str(folder), str(sessions), code], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    walks = [json.loads(line) for line in (folder / "walks.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert len(walks) == sessions
+    return walks
+
+
+def check_walks(walks, general, data, code="200", shares=True):
+    """Cada visita sigue el modelo de su grupo: la parte de visitas es el peso, empieza por un inicio del grupo
+    sin pausa, cada paso es posible en el grupo (por código si lo hay), la pausa es una del grupo y el índice el
+    del modelo general."""
+    weights, parts = data["weights"], data["groups"]
+    counts = Counter(w["group"] for w in walks)
+    assert set(counts) <= set(range(len(parts)))
+    for group, weight in enumerate(weights if shares else []):
+        assert abs(counts[group] / len(walks) - weight) <= 0.03, (group, counts[group], weight)
+    for w in walks:
+        part, steps = parts[w["group"]], w["steps"]
+        if not steps:
+            assert w["skipped"]
+            continue
+        assert part["start"].get(steps[0][0], 0) > 0
+        assert steps[0][1] == 0
+        for state, _, index in steps:
+            assert index == general["states"].index(state)
+        distributions = []
+        for state, _, _ in steps:
+            distributions.append(part["status_transitions"].get(state, {}).get(code)
+                                 or part["transitions"].get(state) or {END: 1})
+        for (state, _, _), (following, pause, _), distribution in zip(steps, steps[1:], distributions):
+            assert distribution.get(following, 0) > 0, (w["group"], state, following)
+            pauses = part["think_time_ms"].get(state, {}).get(following)
+            assert (pause in pauses) if pauses else pause == 0, (state, following, pause)
+        # Cómo acaba: el grupo permite END, se llega a max_steps o se omite una petición sin id
+        assert w["skipped"] or len(steps) >= general["max_steps"] or distributions[-1].get(END, 0) > 0
+    return counts
+
+
+def small_inputs():
+    """Un modelo pequeño hecho a mano para llamar a generate_jmx directamente."""
+    model = {"states": ["GET /a", "GET /b"], "start": {"GET /a": 1.0},
+             "transitions": {"GET /a": {"GET /b": 1.0}, "GET /b": {END: 1.0}}, "status_transitions": {},
+             "max_steps": 10}
+    think_times = {"GET /a": {"GET /b": [1000, 2000]}}
+    profile = {"vusers": 2, "ramp_up_seconds": 1, "duration_seconds": 10}
+    return model, think_times, profile
+
+
+def test_plan_without_groups_is_the_chain_plan(tmp_path):
+    """Negativo: con un solo grupo (o ninguno), --visit-groups no cambia ni un byte del plan."""
+    log_paces = str(write_log(tmp_path / "paces.jsonl", one_kind_two_paces()))
+    log_random = str(write_log(tmp_path / "random.jsonl", one_random_chain()))
+    sessions = two_kinds_same_status()
+    log_no_id = str(write_log(tmp_path / "no_id.jsonl", sessions, without_id=range(len(sessions))))
+    for n, inputs in enumerate((["--logs", log_paces], ["--logs", log_random], ["--logs", log_no_id],
+                                ["--jar", JAR])):
+        plain, grouped = plans(tmp_path, inputs, name=f"p{n}")
+        assert sha256(plain) == sha256(grouped), inputs
+        assert PICKER not in grouped.read_text(encoding="utf-8")
+
+
+def test_plan_adds_only_the_group_picker(tmp_path):
+    """Con dos grupos, el plan es el de la cadena más un solo elemento, antes de «Elegir primera petición»."""
+    plain, grouped = plans(tmp_path, ["--logs", same_status_log(tmp_path)])
+    root = ET.parse(grouped).getroot()
+    pickers = [e for e in root.iter("JSR223PreProcessor") if e.get("testname") == PICKER]
+    assert len(pickers) == 1
+    assert sum(e.get("testname") == PICKER for e in root.iter()) == 1
+
+    tree = new_session_tree(root)
+    children = list(tree)
+    assert [c.get("testname") for c in children if c.tag != "hashTree"] == [PICKER, FIRST]
+    assert children[0].get("testname") == PICKER and children[1].tag == "hashTree" and len(children[1]) == 0
+    # El selector se declara como «Elegir primera petición» (groovy, caché...): si no, JMeter lo rechaza en cada
+    # visita sin parar la prueba y la visita sigue con el modelo general
+    first = children[2]
+    assert first.get("testname") == FIRST
+    for element in (children[0], first):
+        assert element.get("guiclass") == "TestBeanGUI" and element.get("testclass") == "JSR223PreProcessor"
+    props = lambda element: [(e.get("name"), e.text) for e in element.findall("stringProp") if e.get("name") != "script"]
+    assert props(children[0]) == props(first)
+    assert dict(props(children[0])) == {"scriptLanguage": "groovy", "parameters": None, "filename": None,
+                                        "cacheKey": "true"}
+    tree.remove(children[0])
+    tree.remove(children[1])
+    assert ET.canonicalize(ET.tostring(root, encoding="unicode"), strip_text=True) == \
+        ET.canonicalize(from_file=str(plain), strip_text=True)
+
+
+def test_picker_carries_the_group_models(tmp_path):
+    """El JSON del selector son los pesos y los modelos de build_group_models con los argumentos de main.py, y
+    el modelo general incrustado es el mismo que el de «Elegir primera petición»."""
+    chain = {"min_probability": MAIN_DEFAULTS["min_probability"], "endpoints": None,
+             "jar_weight": MAIN_DEFAULTS["jar_weight"]}
+    # Con 40 lectores y 20 creadores los pesos son distintos (2/3 y 1/3), escritos a mano
+    for name, kinds, weights in (("same", {}, [0.5, 0.5]), ("uneven", {"reading": 40, "writing": 20}, [2 / 3, 1 / 3])):
+        log = same_status_log(tmp_path, name=f"{name}.jsonl", **kinds)
+        grouped = generate(["--logs", log, "--visit-groups"], tmp_path / f"{name}.jmx")
+        scripts = jsr223_scripts(grouped)
+
+        df = parse_logs(log)
+        model = build_markov_model(df, chain["min_probability"], MAIN_DEFAULTS["max_steps"],
+                                   endpoints=None, jar_weight=chain["jar_weight"])
+        groups, _ = find_visit_groups(df, chain)
+        parts = build_group_models(df, groups, model, chain, pause_range(MAIN_DEFAULTS["default_pause"]))
+        expected = {"weights": [p["weight"] for p in parts],
+                    "groups": [{key: p[key] for key in GROUP_KEYS} for p in parts]}
+        assert len(parts) == 2
+        data = picker_groups(scripts[PICKER])
+        close(data, json.loads(json.dumps(expected)))
+        close(data["weights"], weights)
+
+    # El modelo general: el mismo literal en el selector y en «Elegir primera petición», y es el de main.py
+    assert embedded_literal(scripts[PICKER]) == embedded_literal(scripts[FIRST])
+    general = embedded_model(scripts[FIRST])
+    close(general["start"], model["start"])
+    close(general["transitions"], model["transitions"])
+    assert general["states"] == model["states"]
+
+    # El resto del selector es la plantilla, con la expresión en lugar del marcador
+    template = (TEMPLATES_DIR / "visit_group.groovy").read_text(encoding="utf-8")
+    assert scripts[PICKER].endswith(template.replace("__GROUPS_JSON__", picker_expression(scripts[PICKER])))
+    common = (TEMPLATES_DIR / "markov_common.groovy").read_text(encoding="utf-8")
+    assert scripts[PICKER].startswith(common.split("__MODEL_JSON__")[0])
+
+
+def test_picker_groups_have_their_own_status_transitions(tmp_path):
+    """Regresión del 16-17: cada grupo lleva sus status_transitions; si no, putAll dejaría las generales, que
+    next_request.groovy consulta primero, y los lectores harían GET /a -> POST /c."""
+    grouped = generate(["--logs", same_status_log(tmp_path), "--visit-groups"], tmp_path / "grouped.jmx")
+    scripts = jsr223_scripts(grouped)
+    data = picker_groups(scripts[PICKER])
+    assert len(data["groups"]) == 2
+    for part in data["groups"]:
+        assert set(part) == set(GROUP_KEYS)
+    readers_ = [part for part in data["groups"]
+                if part["status_transitions"].get("GET /a", {}).get("200") == {"GET /b": 1.0}]
+    assert len(readers_) == 1
+    general = embedded_model(scripts[FIRST])
+    close(general["status_transitions"]["GET /a"]["200"], {"GET /b": 0.5, "POST /c": 0.5})
+
+
+def test_groovy_text_survives_quotes_backslashes_and_size():
+    """Límite: comillas triples, barras, comillas dobles, é, un emoji y $, en 4 trozos."""
+    piece = "a'''b\\c\"d é 😀 $x ${y} \\' '"
+    text = (piece * (3 * CHUNK // len(piece) + 2))[:3 * CHUNK + 7]
+    assert len(text) == 3 * CHUNK + 7
+    chunks, value = groovy_value(_groovy_text(text))
+    assert len(chunks) == 4
+    assert value == text
+    # Vacío: un solo trozo vacío
+    assert _groovy_text("") == "[''''''].join()"
+    assert groovy_value(_groovy_text(""))[1] == ""
+    # Cada trozo empieza y acaba en un trozo de CHUNK caracteres del texto
+    assert [unescape(chunk) for chunk in chunks] == [text[i:i + CHUNK] for i in range(0, len(text), CHUNK)]
+
+
+def test_generate_jmx_without_groups_is_unchanged(tmp_path):
+    """Negativo: visit_groups ausente, None o [] escriben el mismo fichero, byte a byte."""
+    model, think_times, profile = small_inputs()
+    paths = [tmp_path / f"{name}.jmx" for name in ("absent", "none", "empty")]
+    generate_jmx(copy.deepcopy(model), think_times, profile, str(paths[0]))
+    generate_jmx(copy.deepcopy(model), think_times, profile, str(paths[1]), visit_groups=None)
+    generate_jmx(copy.deepcopy(model), think_times, profile, str(paths[2]), visit_groups=[])
+    assert paths[0].read_bytes() == paths[1].read_bytes() == paths[2].read_bytes()
+    assert PICKER not in paths[0].read_text(encoding="utf-8")
+
+
+def test_plan_keeps_one_thread_group_and_vusers(tmp_path):
+    """Negativo: un solo Thread Group y el mismo -Jvusers con grupos y sin."""
+    plain, grouped = plans(tmp_path, ["--logs", same_status_log(tmp_path)])
+    threads = []
+    for plan in (plain, grouped):
+        root = ET.parse(plan).getroot()
+        groups = list(root.iter("ThreadGroup"))
+        assert len(groups) == 1
+        threads.append(groups[0].findtext("stringProp[@name='ThreadGroup.num_threads']"))
+    assert threads[0] == threads[1]
+    assert threads[1].startswith("${__P(vusers,")
+
+
+def test_templates_still_read_the_model_from_the_thread():
+    """Contrato con las plantillas que no se tocan: leen el modelo de stormModel antes que el incrustado."""
+    common = (TEMPLATES_DIR / "markov_common.groovy").read_text(encoding="utf-8")
+    start = (TEMPLATES_DIR / "session_start.groovy").read_text(encoding="utf-8")
+    following = (TEMPLATES_DIR / "next_request.groovy").read_text(encoding="utf-8")
+    assert 'def model = vars.getObject("stormModel")\nif (model == null) {' in common
+    assert "goTo(pick(model.start))" in start
+    assert following.index("model.status_transitions") < following.index("model.transitions[current]")
+    assert "model.think_time_ms[current]" in following
+    assert following.count("Thread.sleep(pauseMs)") == 1
+
+
+@needs_jmeter
+def test_groovy_sessions_follow_their_group(tmp_path):
+    """Groovy de verdad: cada visita usa el inicio, las transiciones (por código) y las pausas de su grupo, y
+    ninguna visita de los lectores hace GET /a -> POST /c."""
+    grouped = generate(["--logs", same_status_log(tmp_path), "--visit-groups"], tmp_path / "grouped.jmx")
+    scripts = jsr223_scripts(grouped)
+    data = picker_groups(scripts[PICKER])
+    general = embedded_model(scripts[FIRST])
+    walks = walk(grouped, tmp_path / "walk", 4000)
+    counts = check_walks(walks, general, data)
+    assert set(counts) == {0, 1}
+
+    readers_group = next(n for n, part in enumerate(data["groups"])
+                         if part["status_transitions"].get("GET /a", {}).get("200") == {"GET /b": 1.0})
+    reader_walks = [w for w in walks if w["group"] == readers_group]
+    assert reader_walks
+    for w in reader_walks:
+        states = [state for state, _, _ in w["steps"]]
+        assert ("GET /a", "POST /c") not in set(zip(states, states[1:])), states
+    # Los otros sí lo hacen (el control: el banco ve la diferencia)
+    other = [w for w in walks if w["group"] != readers_group]
+    assert any(("GET /a", "POST /c") in set(zip(s, s[1:])) for s in ([x for x, _, _ in w["steps"]] for w in other))
+
+    # Con un código que no tiene distribución propia (404), mandan las transitions del grupo (no las generales)
+    assert all("404" not in statuses for part in data["groups"] for statuses in part["status_transitions"].values())
+    walks_404 = walk(grouped, tmp_path / "walk404", 2000, code="404")
+    check_walks(walks_404, general, data, code="404", shares=False)
+    for w in walks_404:
+        if w["group"] == readers_group:
+            states = [state for state, _, _ in w["steps"]]
+            assert ("GET /a", "POST /c") not in set(zip(states, states[1:])), states
+
+
+@needs_jmeter
+def test_groovy_sessions_on_the_reference_log(tmp_path):
+    """Lo mismo con el log de referencia (--session --session-users 1,2,3) y 2.000 visitas."""
+    plain, grouped = plans(tmp_path, ["--logs", REFERENCE, "--session", "--session-users", "1,2,3"])
+    scripts = jsr223_scripts(grouped)
+    if PICKER not in scripts:
+        assert sha256(plain) == sha256(grouped), "un solo grupo en el log de referencia: el plan es el de la cadena"
+        return
+    data = picker_groups(scripts[PICKER])
+    general = embedded_model(scripts[FIRST])
+    assert len(data["groups"]) > 1
+    counts = check_walks(walk(grouped, tmp_path / "walk", 2000), general, data)
+    assert set(counts) == set(range(len(data["groups"])))
+
+
+@needs_jmeter
+def test_groovy_compiles_a_groups_json_over_64k(tmp_path):
+    """Límite: un JSON de grupos de más de 70.000 caracteres va a trozos, compila y hace 200 visitas, con las
+    pausas del grupo (3-4 s), no las del modelo general (1-2 s)."""
+    model, think_times, profile = small_inputs()
+    count = 600
+    group = {"weight": 1 / count, "start": {"GET /a": 1.0},
+             "transitions": {"GET /a": {"GET /b": 1.0}, "GET /b": {END: 1.0}},
+             "status_transitions": {}, "think_time_ms": {"GET /a": {"GET /b": [3000, 4000]}}}
+    plan = tmp_path / "big.jmx"
+    generate_jmx(model, think_times, profile, str(plan), visit_groups=[copy.deepcopy(group) for _ in range(count)])
+    scripts = jsr223_scripts(plan)
+    chunks, value = groovy_value(picker_expression(scripts[PICKER]))
+    assert len(value) > 70_000
+    assert len(chunks) == math.ceil(len(value) / CHUNK) > 7
+    walks = walk(plan, tmp_path / "walk", 200)
+    for w in walks:
+        assert not w["skipped"]
+        assert [(state, index) for state, _, index in w["steps"]] == [("GET /a", 0), ("GET /b", 1)]
+        assert w["steps"][0][1] == 0 and w["steps"][1][1] in (3000, 4000)
+    assert len({w["group"] for w in walks}) > 50
+
+
+def test_picker_json_is_ascii_and_needs_its_keys(tmp_path):
+    """El JSON de los grupos va en ASCII puro; un grupo sin status_transitions hace petar el generador (KeyError);
+    el marcador se busca después del modelo incrustado, y sin marcador en la plantilla, ValueError."""
+    model, think_times, profile = small_inputs()
+    # Un estado con é y un emoji, y el texto del marcador dentro del modelo general
+    model = {**model, "note": "__GROUPS_JSON__"}
+    group = {"weight": 1.0, "start": {"GET /a": 1.0}, "transitions": {"GET /a": {"GET /b": 1.0}},
+             "status_transitions": {"GET /a": {"200": {"GET /b": 1.0}}},
+             "think_time_ms": {"GET /a": {"GET /b": [1000]}}, "extra": "no va al JSON"}
+    group["transitions"]["GET /caf\u00e9 \U0001F600"] = {END: 1.0}
+    plan = tmp_path / "ascii.jmx"
+    generate_jmx(copy.deepcopy(model), think_times, profile, str(plan), visit_groups=[group, group])
+    script = jsr223_scripts(plan)[PICKER]
+    expression = picker_expression(script)
+    assert expression.isascii()
+    data = picker_groups(script)
+    assert data["groups"][0]["transitions"]["GET /caf\u00e9 \U0001F600"] == {END: 1.0}
+    assert set(data["groups"][0]) == set(GROUP_KEYS)
+    assert embedded_model(script)["note"] == "__GROUPS_JSON__"
+
+    for missing in GROUP_KEYS:
+        broken = {key: value for key, value in group.items() if key != missing}
+        with pytest.raises(KeyError):
+            generate_jmx(copy.deepcopy(model), think_times, profile, str(tmp_path / "broken.jmx"),
+                         visit_groups=[broken])
+
+    from jmx_generator import generator
+    real = generator._groovy
+    try:
+        generator._groovy = lambda script, model_json: real("session_start.groovy", model_json)
+        with pytest.raises(ValueError):
+            generator._visit_group_script("{}", [group])
+    finally:
+        generator._groovy = real

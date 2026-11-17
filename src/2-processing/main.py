@@ -133,6 +133,7 @@ def main() -> None:
         opts.host, opts.port, path_params, bodies,
         correlation, session, query_params=query_params, 
         header_models=header_models,
+        visit_groups=visit_groups,
     )
     print(f"Plan generado: {opts.output}")
 
