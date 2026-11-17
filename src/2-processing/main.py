@@ -54,6 +54,8 @@ def main() -> None:
         default="",
         help="Cabeceras HTTP permitidas, separadas por comas"
     )
+    args.add_argument("--habitual-traffic", action="store_true",
+                      help="tráfico habitual (capa de IA): los {id} de las rutas se aprenden solo de las respuestas 2xx")
     opts = args.parse_args()
 
     if not opts.logs and not opts.jar:
@@ -94,7 +96,7 @@ def main() -> None:
     model = build_markov_model(df_logs, opts.min_probability, opts.max_steps,
                                endpoints=endpoints, jar_weight=opts.jar_weight)
     think_times = add_default_pauses(build_think_times(df_logs), model, pause_range(opts.default_pause))
-    path_params = build_path_params(df_logs)
+    path_params = build_path_params(df_logs, only_2xx=opts.habitual_traffic)
     query_params = build_query_params(df_logs)
     allowed_headers = [
         name.strip().lower()

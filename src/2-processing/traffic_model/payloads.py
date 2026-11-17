@@ -12,6 +12,8 @@ import re
 from collections import Counter
 from decimal import Decimal
 
+from traffic_model.status_filter import successful_rows
+
 # Un {parámetro} dentro de una ruta: en "/api/accounts/{id}" encuentra "id"
 PATH_PARAM = re.compile(r"\{(\w+)\}")
 
@@ -62,10 +64,13 @@ def path_regex(endpoint):
     return re.compile("^" + pattern + "$")
 
 
-def build_path_params(df):
+def build_path_params(df, only_2xx=False):
     """Por cada petición con {parámetros}, los valores vistos en la columna 'path' y su frecuencia:
 
     {"GET /api/accounts/{id}": {"id": [["3", 0.4], ["1", 0.3], ...]}, ...}
+
+    Con only_2xx=True (--habitual-traffic), los valores salen solo de las respuestas 2xx
+    (y de las líneas sin código), salvo en las peticiones que no tienen ninguna 2xx.
 
     Sin logs devuelve {}: JMeter usará 1.
     """
@@ -77,6 +82,13 @@ def build_path_params(df):
         params = PATH_PARAM.findall(endpoint)        # "/api/accounts/{id}" -> ["id"]
         if not params:
             continue                                 # ruta sin {parámetros}: nada que hacer
+
+        if only_2xx:
+            # Solo los {id} de las peticiones que la app aceptó; si una petición no tiene
+            # ninguna 2xx, se queda entera (si no, desaparecería del plan)
+            accepted = successful_rows(group)
+            if not accepted.empty:
+                group = accepted
 
         # Sacamos el valor de cada parámetro de cada ruta concreta del log
         regex = path_regex(endpoint)
