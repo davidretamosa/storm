@@ -39,6 +39,19 @@ def build_samplers(
     return samplers
 
 
+# Groovy no admite un literal de texto de mas de 65535 bytes (en UTF-8). Con los
+# caracteres no ASCII ocupando hasta 3 bytes, troceamos con mucho margen.
+MAX_LITERAL_CHARS = 20000
+
+TRIPLE = "'" * 3
+
+
+def _groovy_literal(text: str) -> str:
+    """Texto como literal de Groovy entre triples comillas simples (con barras y comillas escapadas)."""
+    escaped = text.replace("\\", "\\\\").replace("'", "\\'")
+    return TRIPLE + escaped + TRIPLE
+
+
 def _groovy(script: str, model_json: str) -> str:
     """Script de JMeter con el modelo incrustado."""
 
@@ -46,13 +59,21 @@ def _groovy(script: str, model_json: str) -> str:
         TEMPLATES_DIR / "markov_common.groovy"
     ).read_text(encoding="utf-8")
 
-    embedded = model_json.replace(
-        "\\", "\\\\"
-    ).replace("'''", "\\'\\'\\'")
+    placeholder = TRIPLE + "__MODEL_JSON__" + TRIPLE
 
-    return common.replace(
-        "__MODEL_JSON__", embedded
-    ) + (TEMPLATES_DIR / script).read_text(encoding="utf-8")
+    if len(model_json) <= MAX_LITERAL_CHARS:
+        # Modelo pequeno: un solo literal, como siempre
+        common = common.replace(placeholder, _groovy_literal(model_json))
+    else:
+        # Modelo grande: varios literales unidos al ejecutar. Cada trozo se escapa por
+        # separado, asi que un corte nunca deja una barra o una comilla a medias.
+        pieces = [
+            _groovy_literal(model_json[i:i + MAX_LITERAL_CHARS])
+            for i in range(0, len(model_json), MAX_LITERAL_CHARS)
+        ]
+        common = common.replace(placeholder, "[" + ", ".join(pieces) + "].join('')")
+
+    return common + (TEMPLATES_DIR / script).read_text(encoding="utf-8")
 
 
 def generate_jmx(

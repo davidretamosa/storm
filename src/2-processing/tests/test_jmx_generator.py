@@ -186,3 +186,30 @@ def test_query_params_in_samplers(tmp_path):
 
     assert "model.query_params" in script
     assert 'vars.put("stormQuery",' in script
+
+
+def test_large_model_is_split_in_groovy_literals(tmp_path):
+    """Groovy no admite literales de más de 65535 caracteres: un modelo grande va en trozos."""
+    # Modelo de ~150 KB con comillas, barras y no ASCII, para que algún corte caiga en medio
+    awkward = "it's \\ \"q\" ''' ñ€ " * 20
+    big_bodies = {
+        f"POST /api/x{i}": {"f": {"type": "enum", "values": [[awkward + str(i), 1.0]], "presence": 1.0}}
+        for i in range(400)
+    }
+    out = tmp_path / "plan.jmx"
+    generate_jmx(MODEL, THINK_TIMES, PROFILE, str(out), path_params=PATH_PARAMS, bodies=big_bodies)
+    root = ET.parse(out).getroot()
+    script = prop(root.find(".//JSR223PostProcessor"), "script")
+
+    m = re.search(r"parseText\(\[(.*?)\]\.join\(''\)\)", script, re.S)
+    assert m, "un modelo grande debe ir como lista de trozos unidos"
+    pieces = re.findall(r"'''(.*?)'''", m.group(1), re.S)
+    assert len(pieces) > 1
+    # Ningún literal se acerca al límite de Groovy (65535 bytes en UTF-8)
+    assert all(len(p.encode("utf-8")) < 65535 for p in pieces)
+
+    # Deshacer los escapes como lo haría Groovy y comprobar que sale el mismo modelo
+    def unescape(p):
+        return re.sub(r"\\(.)", r"\1", p, flags=re.S)
+
+    assert json.loads("".join(unescape(p) for p in pieces))["bodies"] == big_bodies
