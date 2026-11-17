@@ -56,8 +56,9 @@ def main() -> None:
         help="Cabeceras HTTP permitidas, separadas por comas"
     )
     args.add_argument("--habitual-traffic", action="store_true",
-                      help="tráfico habitual (capa de IA): los {id} de las rutas se aprenden solo de las respuestas 2xx, "
-                           "y se escribe <plan>.jmx.ai.json (duraciones p50/p95, errores 4xx/5xx y curva horaria)")
+                      help="tráfico habitual (capa de IA): los {id} de las rutas solo de las respuestas 2xx, "
+                           "el fichero <plan>.jmx.ai.json (duraciones p50/p95, errores 4xx/5xx y curva horaria) "
+                           "y la curva horaria en el plan, apagada salvo -Jcurva_horaria=1")
     opts = args.parse_args()
 
     if not opts.logs and not opts.jar:
@@ -129,6 +130,7 @@ def main() -> None:
         opts.host, opts.port, path_params, bodies,
         correlation, session, query_params=query_params, 
         header_models=header_models,
+        hourly_curve=curve["values"] if curve else None,
     )
     print(f"Plan generado: {opts.output}")
     if opts.habitual_traffic:
