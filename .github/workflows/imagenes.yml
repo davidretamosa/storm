@@ -19,6 +19,7 @@ on:
       - src/3-execution/bankapp/Dockerfile
       - src/3-execution/lab-jmeter/app/**
       - src/3-execution/lab-jmeter/jmeter/**
+      - src/3-execution/k8s/parada/**
       - .github/workflows/imagenes.yml
   workflow_dispatch:
 
@@ -43,6 +44,9 @@ jobs:
           - nombre: storm-lab-jmeter
             contexto: src/3-execution/lab-jmeter/jmeter
             dockerfile: src/3-execution/lab-jmeter/jmeter/Dockerfile
+          - nombre: storm-parada
+            contexto: src/3-execution/k8s/parada
+            dockerfile: src/3-execution/k8s/parada/Dockerfile
     steps:
       - uses: actions/checkout@v4
 
