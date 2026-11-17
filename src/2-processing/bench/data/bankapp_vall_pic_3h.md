@@ -52,7 +52,21 @@ cap adormiment durant l'execució. (Un primer intent amb el Mac amb bateria es v
 
 El log **no s'edita ni es filtra**: aquí només es documenta. Cada xifra s'ha tornat a mesurar el 2026-11-17
 sobre aquest fitxer i el codi de `f4a299f` (comandes des de `src/2-processing`). Les de reproducció surten
-de la línia de base de sota (els 10 `.jtl` d'acceptació, `<sortida>/exec_*/*/acceptacio/acceptacio.jtl`).
+de la línia de base de sota: dels 10 `.jtl` d'acceptació (`$OUT/exec_*/*/acceptacio/acceptacio.jtl`) i dels logs
+que la bankapp escriu a cada corrida (`$OUT/exec_*/*/acceptacio/logs/bankapp.jsonl`). `$OUT` és la carpeta
+`--out` del banc. Els codis de resposta de totes les peticions reproduïdes:
+
+```
+python -c "import sys,glob,pandas as p;d=p.concat(p.read_csv(f) for f in glob.glob(sys.argv[1]+'/exec_*/*/acceptacio/acceptacio.jtl'));print(d.groupby(['label','responseCode']).size().to_string())" "$OUT"
+```
+
+La causa dels 400 i de les 404, als logs de la bankapp de les mateixes corrides:
+
+```
+python -c "import sys,glob,json,re,collections as c;r=[json.loads(l) for f in glob.glob(sys.argv[1]+'/exec_*/*/acceptacio/logs/bankapp.jsonl') for l in open(f)];t=[x for x in r if x['method']=='POST' and x['endpoint']=='/api/transfers'];print('transferències (status, origen=destí):',c.Counter((x['status'],x['body']['fromAccountId']==x['body']['toAccountId']) for x in t));print('404 (id>=100):',c.Counter(int(re.findall(r'/(\d+)',x['path'])[0])>=100 for x in r if x['status']==404))" "$OUT"
+```
+
+Dona `{(200, False): 558, (400, True): 264}` per a les transferències i `{True: 172}` per a les 404.
 
 1. **Les altes surten amb `body {}`.** 241 `POST /api/users` i 241 `POST /api/accounts`, totes 201 i totes
    amb `body {}`.
@@ -70,7 +84,9 @@ de la línia de base de sota (els 10 `.jtl` d'acceptació, `<sortida>/exec_*/*/a
 2. **Els 400 de les transferències no són al log.** Les 540 `POST /api/transfers` són 200, i cap té
    origen = destí.
    - En reproduir-les, **264 de 822 donen 400 (32,1 %)**.
-   - Motiu: el model de bodies tria cada camp per separat (`field_model`, `traffic_model/payloads.py:170-189`
+   - **Les 264 tenen origen = destí, i cap de les 558 que donen 200 no en té** (logs de la bankapp, comanda de
+     dalt).
+   - Per què passa: el model de bodies tria cada camp per separat (`field_model`, `traffic_model/payloads.py:170-189`
      a `f4a299f`; la línia 173 que se citava és de la branca vella). Amb les freqüències del log,
      P(origen = destí) = Σ p_origen · p_destí = 0,333. La bankapp rebutja origen = destí.
    - La correlació de la Maria (`markov_common.groovy:198-210`) canviaria `fromAccountId` pel compte creat a
@@ -91,7 +107,7 @@ de la línia de base de sota (els 10 `.jtl` d'acceptació, `<sortida>/exec_*/*/a
    - No és al repo, i el banc no el llegeix.
    - El `meta.json` ja no és a la màquina i no s'ha pogut tornar a obrir. Sí que es pot veure al log: les
      peticions per minut passen de 124 (21:23) a 51 (21:24) i es queden a la vall fins al final. Això
-     concorda amb 21:24:15 i no amb 22:24:03.
+     concorda amb 21:24:15 i no amb 22:24:03, però no en fixa el segon.
 
    ```
    python -c "import json,collections as c;n=c.Counter(json.loads(l)['timestamp'][11:19] for l in open('bench/data/bankapp_vall_pic_3h.jsonl'));print([(m,sum(v for k,v in n.items() if k.startswith(m))) for m in ('21:22','21:23','21:24','21:25')])"
@@ -100,8 +116,8 @@ de la línia de base de sota (els 10 `.jtl` d'acceptació, `<sortida>/exec_*/*/a
    - `data.sql` (`origin/develop`) crea usuaris i comptes 1–3, i els autoincrements comencen a 100.
    - Als camins del log (sense els de sessió) hi ha 482 ids ≥ 100, de 5.899.
    - En reproduir-ho surten 404: 86 a `GET /api/accounts/{id}` (1,9 %) i 86 a
-     `POST /api/accounts/{id}/deposit` (9,0 %). Al model de rutes, la probabilitat d'un id ≥ 100 és de
-     l'1,6 % i del 10,1 %.
+     `POST /api/accounts/{id}/deposit` (9,0 %). **Les 172 són a ids ≥ 100** (logs de la bankapp, comanda de
+     dalt). Al model de rutes (`build_path_params`), la probabilitat d'un id ≥ 100 és de l'1,6 % i del 10,1 %.
 
    ```
    python -c "import json,re,collections as c;n=c.Counter(('>=100' if int(m)>=100 else m) for l in open('bench/data/bankapp_vall_pic_3h.jsonl') for x in [json.loads(l)] if not x['endpoint'].startswith('/api/sessions') for m in re.findall(r'/(\d+)(?=/|$)',x['path']));print(n)"
@@ -172,11 +188,28 @@ transicions ja tenen pauses apreses, `traffic_model/think_time.py:84-95`, i els 
 **Dues mesures amb JMeter real**, que s'apunten i no s'arreglen:
 - **`X-Storm-Bench` arriba al servidor eco** amb el `request_headers.groovy` de la Maria al pla: 14.301 de
   14.301 línies dels 10 `rebut.jsonl` de la línia de base porten `sessionId` = `<fil>-<iteració>`, diferent
-  de l'`X-Session-Id` de l'app.
+  de l'`X-Session-Id` de l'app (al control negatiu, 19.001 de 19.001):
+
+  ```
+  python -c "import sys,glob,json,re;f=glob.glob(sys.argv[1]+'/exec_*/*/fidelitat/rebut.jsonl');r=[json.loads(l) for x in f for l in open(x)];print(sum(bool(x['sessionId'] and re.fullmatch(r'\d+-\d+',x['sessionId']) and x['sessionId']!=x['appSessionId']) for x in r),'de',len(r))" "$OUT"
+  ```
 - **Durada real de cada corrida** amb `duration` 300 (del «Starting standalone test» al «Tidying up» del
   `jmeter.out`): de 302,7 a 309,8 s a les 20 corrides de la línia de base, i de 302,5 a 309,0 s a les 10 del
-  control negatiu. El `Thread.sleep` de la pausa (`next_request.groovy:40`) allarga la prova entre 3 i 10 s
-  per sobre de `duration`.
+  control negatiu.
+
+  ```
+  python -c "import sys,glob,re;d=[(int(re.search(r'Tidying up \.\.\. +@ .*\((\d+)\)',t).group(1))-int(re.search(r'Starting standalone test @ .*\((\d+)\)',t).group(1)))/1000 for f in glob.glob(sys.argv[1]+'/exec_*/*/*/jmeter.out') for t in [open(f).read()]];print(len(d),min(d),max(d))" "$OUT"
+  ```
+
+  L'última mostra de cada `.jtl` acaba entre 298,4 i 299,8 s (comanda de sota); JMeter tarda de 3 a 10 s
+  més a tancar. La pausa més llarga del model és de 10,041 s. Concorda amb que els fils esperen dins del
+  `Thread.sleep` de la pausa (`next_request.groovy:40`) quan s'acaba `duration`, però **és una inferència**:
+  no s'ha fet cap corrida sense aquest `sleep` per comparar.
+
+  ```
+  python -c "import sys,glob,pandas as p;[print(f.split('/exec_')[1],round((x.timeStamp.max()+x.elapsed.max()-x.timeStamp.min())/1000,1)) for f in sorted(glob.glob(sys.argv[1]+'/exec_*/*/*/*.jtl')) for x in [p.read_csv(f)]]" "$OUT"
+  python -c "from log_parser.parser import parse_logs;from traffic_model.think_time import build_think_times;from traffic_model.session import remove_session_requests;d,_=remove_session_requests(parse_logs('bench/data/bankapp_vall_pic_3h.jsonl'),None,'/api/sessions');print(max(v for a in build_think_times(d).values() for l in a.values() for v in l)/1000,'s')"
+  ```
 
 ## Annex: el llançador, tal com va córrer
 
