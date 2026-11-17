@@ -1,0 +1,109 @@
+# Servicio de parada (el botón rojo): un pod permanente que, al recibir POST /parar, para la
+# prueba de JMeter que esté en marcha (ver parada/parada.py).
+#
+# Permisos mínimos, solo dentro de lab-jmeter. Nota: pods/exec no se puede limitar a un pod
+# concreto porque el pod de JMeter cambia de nombre en cada prueba.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: parada
+  namespace: lab-jmeter
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: parada
+  namespace: lab-jmeter
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]            # localizar el pod de JMeter y ver si ha terminado
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["get", "create"]          # shutdown.sh y stoptest.sh dentro del pod
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    resourceNames: ["jmeter"]
+    verbs: ["get", "delete"]          # último recurso: borrar el Job
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    resourceNames: ["jmeter-worker"]
+    verbs: ["get", "patch"]           # apagar los workers
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: parada
+  namespace: lab-jmeter
+subjects:
+  - kind: ServiceAccount
+    name: parada
+    namespace: lab-jmeter
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: parada
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: parada
+  namespace: lab-jmeter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: parada
+  template:
+    metadata:
+      labels:
+        app: parada
+    spec:
+      serviceAccountName: parada
+      containers:
+        - name: parada
+          image: lab-parada:latest        # desplegar.sh lo cambia por la del registro con REGISTRO=...
+          imagePullPolicy: Never
+          env:
+            - name: NS
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            # Opcionales:
+            # - name: TOKEN                # exige "Authorization: Bearer <TOKEN>" en POST /parar
+            #   value: "cambia-esto"
+            # - name: CORS_ORIGEN          # si el botón de Grafana llama desde el navegador
+            #   value: "http://localhost:30000"
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 10
+          resources:
+            requests:
+              cpu: 20m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+---
+# Solo accesible desde dentro del clúster (http://parada:8080/parar). Para probarlo desde tu
+# equipo:  kubectl -n lab-jmeter port-forward svc/parada 8081:8080
+apiVersion: v1
+kind: Service
+metadata:
+  name: parada
+  namespace: lab-jmeter
+spec:
+  type: NodePort
+  selector:
+    app: parada
+  ports:
+    - port: 8080
+      targetPort: 8080
+      nodePort: 30082

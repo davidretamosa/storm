@@ -27,6 +27,9 @@ nodes:
       - containerPort: 30090   # Prometheus  -> http://localhost:40090
         hostPort: 40090
         listenAddress: "127.0.0.1"
+      - containerPort: 30082   # parada      -> http://localhost:40082
+        hostPort: 40082
+        listenAddress: "127.0.0.1"
   - role: worker
   - role: worker
   - role: worker
