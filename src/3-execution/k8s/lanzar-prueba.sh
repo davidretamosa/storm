@@ -1,6 +1,6 @@
 #!/bin/sh
 # Lanza una prueba de carga (Job de JMeter) y muestra su salida en directo.
-# Uso, desde src/3-execution/k8s:  ./lanzar-prueba.sh [escenario] [app|storm] [--workers N]
+# Uso, desde src/3-execution/k8s:  ./lanzar-prueba.sh [escenario] [app|storm] [--workers N] [--url URL]
 #   escenario: humo (por defecto), normal, pico o estres (escenarios/*.properties)
 #   objetivo:  app     app de prueba con su plan (por defecto)
 #              storm   la app objetivo (./desplegar-objetivo.sh) con el plan de 2-processing
@@ -8,6 +8,11 @@
 #   --workers N  prueba distribuida: Kubernetes arranca N workers de JMeter (jmeter-workers.yaml),
 #                la carga se reparte entre ellos y al terminar se vuelven a apagar.
 #                Sin la opción, un solo pod de JMeter genera toda la carga (como siempre).
+#   --url URL    la app NO está en el clúster: ya funciona en otra máquina (el servidor del
+#                cliente, el PC de un compañero...) y JMeter la ataca en esa dirección.
+#                Ejemplos: --url http://192.168.10.2:8080   (otro PC de la red)
+#                          --url http://host.docker.internal:8090   (este mismo PC, fuera de k8s)
+#                Va con el objetivo storm (si no se indica, se usa storm). Solo http.
 set -e
 cd "$(dirname "$0")"
 # En Git Bash (Windows) evita que rutas como pod:/resultados se conviertan a rutas de Windows
@@ -16,17 +21,22 @@ NS=lab-jmeter
 
 # Argumentos: escenario y objetivo por posición; --workers N en cualquier sitio
 NUM_WORKERS=0
+URL=""
 POSICIONALES=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --workers)   NUM_WORKERS="${2:?Uso: --workers N}"; shift 2 ;;
     --workers=*) NUM_WORKERS="${1#--workers=}"; shift ;;
+    --url)       URL="${2:?Uso: --url http://host:puerto}"; shift 2 ;;
+    --url=*)     URL="${1#--url=}"; shift ;;
     *)           POSICIONALES="$POSICIONALES $1"; shift ;;
   esac
 done
 set -- $POSICIONALES
 ESCENARIO="${1:-humo}"
 OBJETIVO="${2:-app}"
+# Con --url el objetivo es la app de fuera con el plan de 2-processing
+[ -n "$URL" ] && [ -z "$2" ] && OBJETIVO=storm
 case "$NUM_WORKERS" in
   ''|*[!0-9]*) echo "--workers necesita un número (0 = sin workers)"; exit 1 ;;
 esac
@@ -47,12 +57,43 @@ case "$OBJETIVO" in
            fi ;;
   *)       echo "Objetivo desconocido '$OBJETIVO': usa app o storm"; exit 1 ;;
 esac
-if [ "$HOST" = objetivo ] && ! kubectl -n "$NS" get deploy objetivo >/dev/null 2>&1; then
-  echo "No hay app objetivo desplegada: ./desplegar-objetivo.sh --imagen <imagen> | --jar <fichero.jar>"
-  exit 1
+if [ -n "$URL" ]; then
+  # App fuera del clúster: host y puerto salen de la URL (el plan los recibe como ${__P(host)}
+  # y ${__P(port)}, así que no hay que tocar el .jmx)
+  [ "$OBJETIVO" = storm ] || { echo "--url va con el objetivo storm (la app de prueba vive en el clúster)"; exit 1; }
+  case "$URL" in
+    http://*)  RESTO=${URL#http://} ;;
+    https://*) echo "--url: https todavía no está soportado (el plan de 2-processing usa http)"; exit 1 ;;
+    *)         RESTO=$URL ;;   # sin esquema: se entiende http
+  esac
+  RESTO=${RESTO%%/*}           # se quita cualquier ruta: el plan ya lleva las suyas
+  HOST=${RESTO%%:*}
+  case "$RESTO" in *:*) PUERTO=${RESTO##*:} ;; *) PUERTO=80 ;; esac
+  case "$PUERTO" in ''|*[!0-9]*) echo "--url: puerto no válido en '$URL'"; exit 1 ;; esac
+  [ -n "$HOST" ] || { echo "--url: falta el host en '$URL'"; exit 1; }
+  # Antes de lanzar nada se comprueba DESDE DENTRO del clúster que la app responde: es desde
+  # ahí desde donde la atacará JMeter (no basta con que responda desde este equipo)
+  echo "Comprobando que la app responde en $HOST:$PUERTO desde el clúster..."
+  if ! kubectl -n "$NS" run comprobar-url --rm -i --restart=Never --quiet --image=busybox:1.36 \
+       --command -- nc -z -w 5 "$HOST" "$PUERTO" >/dev/null 2>&1; then
+    kubectl -n "$NS" delete pod comprobar-url --ignore-not-found >/dev/null 2>&1 || true
+    echo "La app no responde en $HOST:$PUERTO desde el clúster. Revisa que:"
+    echo "  - la app está arrancada y escucha en el puerto $PUERTO"
+    echo "  - si está en otro PC: misma red y el puerto $PUERTO abierto en su firewall"
+    echo "    (desde este PC: Test-NetConnection $HOST -Port $PUERTO)"
+    echo "  - si está en este mismo PC, fuera de Kubernetes: usa host.docker.internal como host"
+    exit 1
+  fi
+  echo "La app responde."
+else
+  if [ "$HOST" = objetivo ] && ! kubectl -n "$NS" get deploy objetivo >/dev/null 2>&1; then
+    echo "No hay app objetivo desplegada: ./desplegar-objetivo.sh --imagen <imagen> | --jar <fichero.jar>"
+    echo "o, si la app ya funciona fuera del clúster: --url http://host:puerto"
+    exit 1
+  fi
+  # Puerto en el que escucha la app (el de su Service); el plan lo recibe como ${__P(port)}
+  PUERTO=$(kubectl -n "$NS" get svc "$HOST" -o jsonpath='{.spec.ports[0].port}')
 fi
-# Puerto en el que escucha la app (el de su Service); el plan lo recibe como ${__P(port)}
-PUERTO=$(kubectl -n "$NS" get svc "$HOST" -o jsonpath='{.spec.ports[0].port}')
 
 # Criterios de aprobado (MAX_ERRORES_PCT y MAX_P95_MS)
 . "criterios/$CRITERIOS.properties"

@@ -265,6 +265,16 @@ src/3-execution/k8s/lanzar-prueba.sh humo storm
   la bankapp: 0,1 % de errores del servidor y p95 de 500 ms); ajustadlos a lo que se exija a
   la app.
 
+Si la app **ya funciona fuera del clúster** (en el servidor del cliente, en el PC de un compañero
+o en vuestro PC con `java -jar`), no hace falta desplegarla: basta con su dirección.
+
+```bash
+src/3-execution/k8s/lanzar-prueba.sh humo --url http://192.168.10.2:8080
+```
+
+Para una app en vuestro mismo PC fuera de Kubernetes, el host es `host.docker.internal`.
+Detalles en [k8s/README.md](k8s/README.md#la-app-fuera-del-clúster---url).
+
 El plan sí tiene que estar hecho para esa app: lo genera 2-processing a partir de su `.jar` y
 de sus logs, que deben tener el formato que 2-processing sabe leer.
 

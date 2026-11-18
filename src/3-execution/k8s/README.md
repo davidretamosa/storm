@@ -26,8 +26,39 @@ Desde esta carpeta (`src/3-execution/k8s`):
 ./cargar-plan.sh plan.jmx      # carga el plan de esa app (p. ej. el que genera 2-processing)
 ./lanzar-prueba.sh normal storm     # inyecta en la app objetivo el plan cargado con cargar-plan.sh
 ./lanzar-prueba.sh normal storm --workers 3   # la misma prueba, repartida entre 3 workers
+./lanzar-prueba.sh normal --url http://192.168.10.2:8080   # contra una app que funciona FUERA del clúster
 ./quitar.sh                    # borra todo el laboratorio del clúster
 ```
+
+## La app fuera del clúster (`--url`)
+
+Lo habitual es que la app que se prueba **ya esté funcionando en su servidor** (el del cliente) y
+que el laboratorio solo genere el tráfico. Con `--url` la app no se despliega en Kubernetes:
+JMeter la ataca en la dirección que se le indica.
+
+```bash
+./cargar-plan.sh plan.jmx                                  # el plan de esa app (2-processing)
+./lanzar-prueba.sh normal --url http://192.168.10.2:8080   # app en otro PC de la red
+./lanzar-prueba.sh normal --url http://host.docker.internal:8090 --workers 3   # app en este PC, fuera de k8s
+```
+
+```
+[clúster: JMeter master + workers] ──red──▶ [otra máquina: la app]
+```
+
+- El host y el puerto de la URL llegan al plan como `${__P(host)}` y `${__P(port)}`, igual que con
+  la app objetivo: el `.jmx` no se toca. Funciona también con `--workers`.
+- Antes de lanzar la prueba, el script comprueba **desde dentro del clúster** que la app responde
+  en esa dirección (que es desde donde la atacará JMeter); si no, dice qué revisar.
+- Para una app en **este mismo PC** pero fuera de Kubernetes (`java -jar app.jar`, o un contenedor
+  con `docker run -p`), el host es `host.docker.internal`: así llaman los pods al PC.
+- Para una app en **otro PC**: los dos en la misma red (por ejemplo, con cable y un switch) y el
+  puerto de la app abierto en el firewall de ese PC. Desde este:
+  `Test-NetConnection <IP> -Port <puerto>`.
+- Solo `http`: el plan que genera 2-processing tiene el protocolo fijo en http.
+- Grafana no muestra la CPU ni la memoria de la app, porque Prometheus solo ve el clúster; los
+  tiempos, los errores y el veredicto funcionan igual.
+- `desplegar-objetivo.sh` (la app dentro del clúster) sigue disponible para pruebas rápidas.
 
 ## La app objetivo: cualquier aplicación
 
