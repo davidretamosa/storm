@@ -9,6 +9,9 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 PATH_PARAM = re.compile(r"\{(\w+)\}")
+# Groovy no admite literales de más de 65.535 caracteres: el JSON de los grupos va a trozos
+CHUNK = 10_000
+GROUP_KEYS = ("start", "transitions", "status_transitions", "think_time_ms")
 
 
 def _to_jmeter_path(endpoint: str) -> str:
@@ -64,6 +67,43 @@ def hourly_curve_script(values: List[float]) -> str:
         "__CURVE_VALUES__", ", ".join(repr(float(v)) for v in values)
     )
 
+def _groovy_text(text: str) -> str:
+    """Expresión de Groovy que vale `text`: ['''trozo''', '''trozo''', ...].join().
+
+    Trozos de CHUNK caracteres, cada uno escapado por separado (primero \\ y después '), de modo que
+    ningún trozo cierra el literal ni parte un escape."""
+
+    chunks = [text[i:i + CHUNK] for i in range(0, len(text), CHUNK)] or [""]
+    literals = [
+        "'''" + chunk.replace("\\", "\\\\").replace("'", "\\'") + "'''"
+        for chunk in chunks
+    ]
+    return "[" + ", ".join(literals) + "].join()"
+
+
+def _visit_group_script(model_json: str, visit_groups: list) -> str:
+    """Script del selector de grupo de visita: el modelo general incrustado (markov_common.groovy) y,
+    en lugar de __GROUPS_JSON__, los pesos y los modelos de los grupos."""
+
+    # En ASCII puro: Groovy 3.0.20 puede corromper un carácter fuera del BMP en un literal largo
+    groups_json = json.dumps(
+        {
+            "weights": [g["weight"] for g in visit_groups],
+            "groups": [{k: g[k] for k in GROUP_KEYS} for g in visit_groups],
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+    )
+
+    # rpartition: el marcador de la plantilla va después del modelo incrustado
+    head, mark, tail = _groovy(
+        "visit_group.groovy", model_json
+    ).rpartition("__GROUPS_JSON__")
+    if not mark:
+        raise ValueError("visit_group.groovy no tiene el marcador __GROUPS_JSON__")
+
+    return head + _groovy_text(groups_json) + tail
+
 
 def generate_jmx(
     model: dict,
@@ -79,6 +119,7 @@ def generate_jmx(
     query_params: Optional[dict] = None,
     header_models: Optional[dict] = None,
     hourly_curve: Optional[List[float]] = None,
+    visit_groups: Optional[list] = None,
 ) -> None:
     """Escribe el plan JMX generado."""
 
@@ -138,6 +179,9 @@ def generate_jmx(
             "login_response.groovy", model_json
         ) if session else "",
         hourly_curve_script=hourly_curve_script(hourly_curve) if hourly_curve else "",
+        visit_group_script=_visit_group_script(
+            model_json, visit_groups
+        ) if visit_groups else "",
     )
 
     Path(output_path).parent.mkdir(

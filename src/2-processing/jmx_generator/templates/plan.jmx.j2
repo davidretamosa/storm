@@ -76,6 +76,16 @@
           <stringProp name="ActionProcessor.duration">0</stringProp>
         </TestAction>
         <hashTree>
+          {% if visit_group_script %}
+          <JSR223PreProcessor guiclass="TestBeanGUI" testclass="JSR223PreProcessor" testname="Elegir grupo de visita">
+            <stringProp name="scriptLanguage">groovy</stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="script">{{ visit_group_script }}</stringProp>
+          </JSR223PreProcessor>
+          <hashTree/>
+          {% endif %}
           <JSR223PreProcessor guiclass="TestBeanGUI" testclass="JSR223PreProcessor" testname="Elegir primera petición">
             <stringProp name="scriptLanguage">groovy</stringProp>
             <stringProp name="parameters"></stringProp>

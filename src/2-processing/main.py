@@ -20,6 +20,7 @@ from traffic_model.payloads import build_body_models, build_path_params, build_q
 from traffic_model.scaling import predict_traffic_scale
 from traffic_model.session import build_session_config, remove_session_requests
 from traffic_model.think_time import add_default_pauses, build_think_times
+from traffic_model.visit_groups import build_group_models, describe, describe_models, find_visit_groups
 from traffic_model.headers import build_header_models
 
 
@@ -59,6 +60,8 @@ def main() -> None:
                       help="tráfico habitual (capa de IA): los {id} de las rutas solo de las respuestas 2xx, "
                            "el fichero <plan>.jmx.ai.json (duraciones p50/p95, errores 4xx/5xx y curva horaria) "
                            "y la curva horaria en el plan, apagada salvo -Jcurva_horaria=1")
+    args.add_argument("--visit-groups", action="store_true",
+                      help="agrupa las sesiones del log en tipos de visita y hace un modelo para cada uno")
     opts = args.parse_args()
 
     if not opts.logs and not opts.jar:
@@ -101,6 +104,14 @@ def main() -> None:
     model = build_markov_model(df_logs, opts.min_probability, opts.max_steps,
                                endpoints=endpoints, jar_weight=opts.jar_weight)
     think_times = add_default_pauses(build_think_times(df_logs), model, pause_range(opts.default_pause))
+    visit_groups = None
+    if opts.visit_groups:
+        chain = {"min_probability": opts.min_probability, "endpoints": endpoints, "jar_weight": opts.jar_weight}
+        groups, report = find_visit_groups(df_logs, chain)
+        print(f"Grupos de visita: {describe(report)}")
+        if len(set(groups.values())) > 1:
+            visit_groups = build_group_models(df_logs, groups, model, chain, pause_range(opts.default_pause))
+            print(f"  {describe_models(visit_groups)}")
     path_params = build_path_params(df_logs, only_2xx=opts.habitual_traffic)
     query_params = build_query_params(df_logs)
     allowed_headers = [
@@ -131,6 +142,7 @@ def main() -> None:
         correlation, session, query_params=query_params, 
         header_models=header_models,
         hourly_curve=curve["values"] if curve else None,
+        visit_groups=visit_groups,
     )
     print(f"Plan generado: {opts.output}")
     if opts.habitual_traffic:
