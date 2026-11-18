@@ -55,6 +55,16 @@ def _groovy(script: str, model_json: str) -> str:
     ) + (TEMPLATES_DIR / script).read_text(encoding="utf-8")
 
 
+def hourly_curve_script(values: List[float]) -> str:
+    """Script del temporizador de la curva horaria (capa de IA, tráfico habitual), con los valores
+    de la curva incrustados. El plan solo lo aplica si se lanza con -Jcurva_horaria=1."""
+
+    template = (TEMPLATES_DIR / "hourly_curve.groovy").read_text(encoding="utf-8")
+    return template.replace(
+        "__CURVE_VALUES__", ", ".join(repr(float(v)) for v in values)
+    )
+
+
 def generate_jmx(
     model: dict,
     think_times: Dict[str, Dict[str, List[int]]],
@@ -68,6 +78,7 @@ def generate_jmx(
     session: Optional[dict] = None,
     query_params: Optional[dict] = None,
     header_models: Optional[dict] = None,
+    hourly_curve: Optional[List[float]] = None,
 ) -> None:
     """Escribe el plan JMX generado."""
 
@@ -126,6 +137,7 @@ def generate_jmx(
         login_response_script=_groovy(
             "login_response.groovy", model_json
         ) if session else "",
+        hourly_curve_script=hourly_curve_script(hourly_curve) if hourly_curve else "",
     )
 
     Path(output_path).parent.mkdir(
