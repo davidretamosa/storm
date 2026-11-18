@@ -12,6 +12,7 @@ PATH_PARAM = re.compile(r"\{(\w+)\}")
 # Groovy no admite literales de más de 65.535 caracteres: el JSON de los grupos va a trozos
 CHUNK = 10_000
 GROUP_KEYS = ("start", "transitions", "status_transitions", "think_time_ms")
+BODY_RULES_PLACEHOLDER = "__BODY_RULES_JSON__"
 
 
 def _to_jmeter_path(endpoint: str) -> str:
@@ -104,6 +105,26 @@ def _visit_group_script(model_json: str, visit_groups: list) -> str:
 
     return head + _groovy_text(groups_json) + tail
 
+def _body_fix_script(rules: dict) -> str:
+    """PreProcessor de la capa de IA (--realistic-bodies) con las reglas de los bodies incrustadas.
+
+    Las reglas se escapan igual que el modelo en _groovy, para que el Groovy las lea tal cual.
+    """
+
+    rules_json = json.dumps(
+        rules, ensure_ascii=False, separators=(",", ":")
+    )
+
+    embedded = rules_json.replace(
+        "\\", "\\\\"
+    ).replace("'''", "\\'\\'\\'")
+
+    return (
+        TEMPLATES_DIR / "body_fix.groovy"
+    ).read_text(encoding="utf-8").replace(
+        BODY_RULES_PLACEHOLDER, embedded
+    )
+
 
 def generate_jmx(
     model: dict,
@@ -120,6 +141,7 @@ def generate_jmx(
     header_models: Optional[dict] = None,
     hourly_curve: Optional[List[float]] = None,
     visit_groups: Optional[list] = None,
+    body_rules: Optional[dict] = None,
 ) -> None:
     """Escribe el plan JMX generado."""
 
@@ -182,6 +204,9 @@ def generate_jmx(
         visit_group_script=_visit_group_script(
             model_json, visit_groups
         ) if visit_groups else "",
+        body_fix_script=_body_fix_script(
+            body_rules
+        ) if body_rules else "",
     )
 
     Path(output_path).parent.mkdir(

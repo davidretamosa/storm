@@ -129,7 +129,7 @@ def build_query_params(df):
 # 3. Bodies desde los logs: cómo es cada campo
 # ---------------------------------------------------------------------------
 
-def build_body_models(df, endpoints=None):
+def build_body_models(df, endpoints=None, only_2xx=False):
     """Cómo es el body de cada petición, campo a campo:
 
     {"POST /api/transfers": {"amount":  {"type": "number", "min": 5.2, "max": 250.0, "decimals": 2, "presence": 1.0},
@@ -141,8 +141,15 @@ def build_body_models(df, endpoints=None):
 
     Si se pasa el .jar (endpoints), las peticiones SIN ningún body en los logs lo generan
     desde su DTO (sección 4). Si hay bodies en los logs, mandan los logs.
+    Con only_2xx=True (capa de IA), cada petición con bodies 2xx que llevan campos usa solo esos bodies.
     """
     result = models_from_logs(df)
+    if only_2xx:
+        # Las peticiones sin bodies 2xx con campos se quedan el modelo de todas las filas
+        good = models_from_logs(successful_rows(df))
+        for request, fields in good.items():
+            if fields:
+                result[request] = fields
     if endpoints:
         add_bodies_from_dto(result, endpoints)
     return result

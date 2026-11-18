@@ -140,6 +140,16 @@
         </WhileController>
 
         <hashTree>
+          {% if body_fix_script %}
+          <JSR223PreProcessor guiclass="TestBeanGUI" testclass="JSR223PreProcessor" testname="STORM-IA: corregir el body">
+            <stringProp name="scriptLanguage">groovy</stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="script">{{ body_fix_script }}</stringProp>
+          </JSR223PreProcessor>
+          <hashTree/>
+          {% endif %}
           <JSR223PreProcessor guiclass="TestBeanGUI" testclass="JSR223PreProcessor" testname="Preparar cabeceras HTTP">
             <stringProp name="scriptLanguage">groovy</stringProp>
             <stringProp name="parameters"></stringProp>

@@ -1,0 +1,2 @@
+# El .gitignore de la raíz ignora *.jar; el .jar de prueba de los bodies realistas sí se versiona
+!bodies_fixture.jar

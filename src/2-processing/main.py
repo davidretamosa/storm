@@ -10,11 +10,13 @@ import argparse
 
 import numpy as np
 
-from jar_parser.parser import compare_with_logs, parse_jar
+from jar_parser.parser import compare_with_logs, parse_jar, read_jar_classes
 from jmx_generator.generator import generate_jmx
 from log_parser.parser import parse_logs
+from traffic_model.body_rules import hide_unique_values, learn_body_rules
 from traffic_model.correlation import build_correlation
 from traffic_model.habitual import concurrency_curve, write_side_file
+from traffic_model.dto_bodies import add_dto_bodies
 from traffic_model.markov import build_markov_model
 from traffic_model.payloads import build_body_models, build_path_params, build_query_params
 from traffic_model.scaling import predict_traffic_scale
@@ -62,6 +64,11 @@ def main() -> None:
                            "y la curva horaria en el plan, apagada salvo -Jcurva_horaria=1")
     args.add_argument("--visit-groups", action="store_true",
                       help="agrupa las sesiones del log en tipos de visita y hace un modelo para cada uno")
+    args.add_argument("--realistic-bodies", action="store_true",
+                      help="cuerpos JSON realistas (capa de IA): el modelo de los bodies sale solo de las peticiones 2xx; "
+                           "con --jar, las peticiones sin campos en los logs salen del DTO; "
+                           "aprende cuantiles, campos distintos y campos únicos, "
+                           "y JMeter corrige cada body justo antes de enviarlo")
     opts = args.parse_args()
 
     if not opts.logs and not opts.jar:
@@ -125,7 +132,19 @@ def main() -> None:
         allowed_headers
     )
     print(f"{len(header_models)} peticiones con cabeceras HTTP.")
-    bodies = build_body_models(df_logs, endpoints)
+    bodies = build_body_models(df_logs, endpoints, only_2xx=opts.realistic_bodies)
+    dto_unique = {}
+    if opts.realistic_bodies and opts.jar:
+        replaced, dto_unique = add_dto_bodies(bodies, df_logs, endpoints, read_jar_classes(opts.jar))
+        print(f"Bodies realistas: {len(replaced)} peticiones con el body del DTO del .jar.")
+    body_rules = None
+    if opts.realistic_bodies:
+        body_rules = learn_body_rules(df_logs, bodies, dto_unique)
+        hide_unique_values(bodies, body_rules)
+        print(f"Bodies realistas: reglas en {len(body_rules)} peticiones "
+              f"({sum(1 for r in body_rules.values() if r['numbers'])} con cuantiles, "
+              f"{sum(1 for r in body_rules.values() if r['different'])} con campos distintos, "
+              f"{sum(1 for r in body_rules.values() if r['unique'])} con campos únicos).")
     profile = predict_traffic_scale(df_logs)
     curve = concurrency_curve(df_logs) if opts.habitual_traffic else None
     correlation = build_correlation(model, bodies)
@@ -143,6 +162,7 @@ def main() -> None:
         header_models=header_models,
         hourly_curve=curve["values"] if curve else None,
         visit_groups=visit_groups,
+        body_rules=body_rules,
     )
     print(f"Plan generado: {opts.output}")
     if opts.habitual_traffic:
