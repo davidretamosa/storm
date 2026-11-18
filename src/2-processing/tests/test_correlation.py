@@ -262,3 +262,30 @@ def test_build_correlation_with_attendee_creation():
             "param": "id",
         }
     }
+
+
+# --- No enviar el propio id al crear, y avisar de la cobertura ---
+from traffic_model.correlation import strip_own_ids, unlinked_params
+
+
+def test_strip_own_ids_from_create_bodies():
+    f = {"type": "choice", "values": [[1, 1.0]], "presence": 1.0}
+    states = ["POST /api/visits", "POST /api/events/addevent", "POST /api/transfers"]
+    bodies = {
+        "POST /api/visits": {"id": f, "petId": f, "description": f},
+        "POST /api/events/addevent": {"event_id": f, "eventTitle": f},
+        "POST /api/transfers": {"fromAccountId": f},
+    }
+    corr = build_correlation({"states": states}, bodies)
+    cleaned = strip_own_ids(bodies, corr)
+    assert set(cleaned["POST /api/visits"]) == {"petId", "description"}      # petId es de OTRO recurso: se queda
+    assert set(cleaned["POST /api/events/addevent"]) == {"eventTitle"}
+    assert set(cleaned["POST /api/transfers"]) == {"fromAccountId"}
+
+
+def test_unlinked_params_reports_uncovered_requests():
+    states = ["POST /api/owners", "GET /api/owners/{ownerId}", "GET /api/stats/{year}"]
+    corr = build_correlation({"states": states}, {})
+    assert unlinked_params({"states": states}, corr, {}) == ["GET /api/stats/{year}"]
+    # Si los logs traen valores para el parámetro, sí se puede probar
+    assert unlinked_params({"states": states}, corr, {"GET /api/stats/{year}": {"year": [["2025", 1.0]]}}) == []

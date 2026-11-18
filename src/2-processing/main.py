@@ -13,7 +13,7 @@ import numpy as np
 from jar_parser.parser import compare_with_logs, parse_jar
 from jmx_generator.generator import generate_jmx
 from log_parser.parser import parse_logs
-from traffic_model.correlation import build_correlation
+from traffic_model.correlation import build_correlation, strip_own_ids, unlinked_params
 from traffic_model.markov import build_markov_model
 from traffic_model.payloads import build_body_models, build_path_params, build_query_params
 from traffic_model.scaling import predict_traffic_scale
@@ -110,11 +110,20 @@ def main() -> None:
     bodies = build_body_models(df_logs, endpoints)
     profile = predict_traffic_scale(df_logs)
     correlation = build_correlation(model, bodies)
+    # Los POST que crean algo no mandan su propio id (lo pone la app)
+    bodies = strip_own_ids(bodies, correlation)
     print(f"{len(model['states'])} estados en la cadena de Markov; {profile['vusers']} usuarios virtuales.")
     print(f"{len(path_params)} peticiones con parámetros de ruta; "
       f"{len(query_params)} con parámetros de consulta; "
       f"{len(bodies)} con cuerpo JSON.")
     print(f"Correlación: {len(correlation['creates'])} peticiones crean algo; sus ids se reutilizan en la sesión.")
+    # Cobertura: las peticiones con {id} sin origen se saltan durante la prueba
+    sin_origen = unlinked_params(model, correlation, path_params)
+    if sin_origen:
+        print(f"AVISO de cobertura: {len(sin_origen)} peticiones tienen un {{id}} sin origen (ni logs ni un POST que lo cree) "
+              "y se saltarán en la prueba:")
+        for state in sin_origen:
+            print(f"   - {state}")
 
     print("--- 3. GENERACIÓN DEL ESCENARIO ---")
     generate_jmx(

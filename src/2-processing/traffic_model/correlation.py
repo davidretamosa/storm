@@ -346,3 +346,50 @@ def build_correlation(model, bodies):
         "body_resources": body_resources,
         "deletes": deletes,
     }
+
+
+CREATE_VERBS = ("create", "add", "new", "register", "save", "insert")
+
+
+def strip_own_ids(bodies, correlation):
+    """Quita de los POST que crean algo el campo con su propio id ('id', 'event_id'...): lo pone la app.
+
+    Si se manda, la app cree que se actualiza algo que no existe (ObjectOptimisticLockingFailure).
+    Los ids de OTROS recursos (petId en POST /api/visits) se quedan.
+    """
+    cleaned = {}
+    for state, fields in bodies.items():
+        resource = correlation["creates"].get(state)
+        if not resource:
+            cleaned[state] = fields
+            continue
+        segment = [part for part in resource.split("/") if part and not PATH_PARAM.fullmatch(part)][-1]
+        own = singularize(re.sub(r"[^a-z0-9]", "", segment.lower()))
+        starts_with_verb = any(own.startswith(verb) and len(own) > len(verb) for verb in CREATE_VERBS)
+        cleaned[state] = {
+            name: spec for name, spec in fields.items()
+            if not (ID_FIELD.search(name) and _is_own_id(name, own, starts_with_verb))
+        }
+    return cleaned
+
+
+def _is_own_id(name, own, starts_with_verb):
+    if name.lower() == "id":
+        return True
+    base = singularize(re.sub(r"[^a-z0-9]", "", re.sub(r"(_id|Id|ID)$", "", name).lower()))
+    return base == own or (starts_with_verb and own.endswith(base))
+
+
+def unlinked_params(model, correlation, path_params):
+    """Las peticiones con algún {parámetro} que no sale de un POST que lo cree ni de los logs.
+
+    Durante la prueba se saltan (no hay id que poner), así que no se estarían probando.
+    """
+    missing = []
+    for state in model["states"]:
+        endpoint = state.split(" ", 1)[1]
+        linked = correlation["path_resources"].get(state, {})
+        learned = path_params.get(state, {})
+        if any(param not in linked and not learned.get(param) for param in PATH_PARAM.findall(endpoint)):
+            missing.append(state)
+    return missing
