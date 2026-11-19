@@ -31,3 +31,10 @@ src/3-execution/lab-jmeter/resultados/
 src/3-execution/k8s/resultados/
 # Carpeta de trabajo de src/3-execution/PUESTA-EN-MARCHA.md (.jar, logs y plan generados)
 /entrada/
+# Lab distribuido (src/3-execution/lab-distribuido): token de k3s, credenciales,
+# resultados, planes generados e imágenes exportadas (.tar) no se suben
+src/3-execution/lab-distribuido/**/resultados/
+src/3-execution/lab-distribuido/**/planes/
+src/3-execution/lab-distribuido/**/*.tar
+src/3-execution/lab-distribuido/**/*token*
+src/3-execution/lab-distribuido/**/.env
