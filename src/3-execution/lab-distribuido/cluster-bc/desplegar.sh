@@ -12,7 +12,7 @@ set -e
 cd "$(dirname "$0")"
 NS=lab-jmeter
 REGISTRO=ghcr.io/davidretamosa
-ETIQUETA="${ETIQUETA:-latest}"
+ETIQUETA="${ETIQUETA:-sha-d1f458f}"
 [ "$ETIQUETA" = latest ] && echo "Aviso: ETIQUETA=latest. Para la demo fija una versión: ETIQUETA=sha-xxxxxxx ./desplegar.sh"
 
 # Cada componente va a un nodo concreto (nodeSelector rol=...): sin las labels, los pods no arrancan

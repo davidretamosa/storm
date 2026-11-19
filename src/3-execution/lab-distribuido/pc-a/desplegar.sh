@@ -11,7 +11,7 @@
 #   sin opciones  la bankapp: ghcr.io/davidretamosa/storm-bankapp:<ETIQUETA>, puerto 8080,
 #                 lista cuando /actuator/health/readiness responde 200
 #   --imagen      otra app (cualquier lenguaje); --puerto y --salud, los suyos
-# Versión de la bankapp: ETIQUETA=sha-xxxxxxx ./desplegar.sh (por defecto latest).
+# Versión de la bankapp: ETIQUETA=sha-xxxxxxx ./desplegar.sh (por defecto sha-d1f458f = develop del 13/11/2026).
 # Para la demo sin internet: versión fija e imágenes ya descargadas (imagePullPolicy IfNotPresent).
 #
 # Dentro de Kubernetes la app se llama "objetivo" (objetivo.yaml) en el namespace lab-jmeter:
@@ -20,7 +20,7 @@ set -e
 cd "$(dirname "$0")"
 export MSYS_NO_PATHCONV=1   # Git Bash: no convertir rutas como /actuator/... a rutas de Windows
 NS=lab-jmeter
-ETIQUETA="${ETIQUETA:-latest}"
+ETIQUETA="${ETIQUETA:-sha-d1f458f}"
 
 IMAGEN=""; PUERTO=8080; SALUD=/actuator/health/readiness
 while [ $# -gt 0 ]; do
