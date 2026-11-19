@@ -15,4 +15,5 @@ datasources:
     uid: prometheus
     type: prometheus
     access: proxy
-    url: http://prometheus:9090
+    # Prometheus está fuera de este clúster, en PC A (NodePort 30090)
+    url: http://192.168.10.1:30090

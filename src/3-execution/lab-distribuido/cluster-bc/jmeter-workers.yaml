@@ -23,8 +23,10 @@ spec:
       labels:
         app: jmeter-worker
     spec:
-      # En un clúster de varios nodos, cada worker en un nodo distinto si se puede (la carga sale
-      # de máquinas diferentes). Con un solo nodo (Docker Desktop) se colocan igualmente.
+      # Lab distribuido: los workers van en el nodo worker (pcc), no en el del master
+      nodeSelector:
+        rol: worker
+      # Si hay varios nodos worker, cada worker en un nodo distinto si se puede.
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
@@ -34,8 +36,9 @@ spec:
               app: jmeter-worker
       containers:
         - name: jmeter-worker
-          image: lab-jmeter:latest      # la misma imagen que el master
-          imagePullPolicy: Never
+          # La misma imagen que el master. desplegar.sh pone ghcr.io/davidretamosa/storm-lab-jmeter:<ETIQUETA>
+          image: __IMAGEN_JMETER__
+          imagePullPolicy: IfNotPresent
           env:
             # IP del pod: el worker la anuncia para que el master sepa dónde contestarle
             # (con los 3 PCs era la IP de cada PC: -Djava.rmi.server.hostname)

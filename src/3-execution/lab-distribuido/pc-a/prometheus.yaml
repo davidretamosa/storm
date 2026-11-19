@@ -1,4 +1,5 @@
-# Prometheus: CPU y memoria de cada pod.
+# Prometheus de PC A: CPU y memoria de cada pod (la bankapp) del Kubernetes de Docker Desktop.
+# Grafana (en el clúster 1) lo lee desde http://192.168.10.1:30090.
 # No hace falta desplegar cAdvisor: el kubelet de cada nodo ya lo lleva dentro y
 # Prometheus lo lee a través de la API de Kubernetes (por eso necesita permisos).
 apiVersion: v1
@@ -79,13 +80,15 @@ spec:
       initContainers:
         - name: permisos
           image: busybox:1.36
+          imagePullPolicy: IfNotPresent
           command: ["chown", "-R", "65534:65534", "/prometheus"]
           volumeMounts:
             - name: datos
               mountPath: /prometheus
       containers:
         - name: prometheus
-          image: prom/prometheus:latest
+          image: prom/prometheus:v2.53.0
+          imagePullPolicy: IfNotPresent
           args:
             - "--config.file=/etc/prometheus/prometheus.yml"
             - "--storage.tsdb.retention.time=15d"
@@ -116,4 +119,4 @@ spec:
   ports:
     - port: 9090
       targetPort: 9090
-      nodePort: 30090   # http://localhost:30090
+      nodePort: 30090   # http://192.168.10.1:30090

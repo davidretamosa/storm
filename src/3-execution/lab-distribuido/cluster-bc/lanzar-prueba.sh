@@ -1,10 +1,12 @@
 #!/bin/sh
 # Lanza una prueba de carga (Job de JMeter) y muestra su salida en directo.
-# Uso, desde src/3-execution/k8s:  ./lanzar-prueba.sh [escenario] [app|storm] [--workers N]
-#   escenario: humo (por defecto), normal, pico o estres (escenarios/*.properties)
-#   objetivo:  app     app de prueba con su plan (por defecto)
-#              storm   la app objetivo (./desplegar-objetivo.sh) con el plan de 2-processing
-#                      (./cargar-plan.sh); JMeter recibe host=objetivo y el puerto de la app
+# Uso, en pcb desde lab-distribuido/cluster-bc:
+#   ./lanzar-prueba.sh [escenario] [externo] [--workers N] [--host IP] [--puerto N]
+#   escenario: humo (por defecto), normal, pico, estres... (escenarios/*.properties)
+#   objetivo:  externo  (el único) la app de PC A, fuera de este clúster, con el plan de
+#                       2-processing (./cargar-plan.sh); JMeter recibe host y port
+#   --host IP     dónde está la app (por defecto 192.168.10.1, PC A)
+#   --puerto N    su puerto (por defecto 30081, el NodePort de la bankapp en PC A)
 #   --workers N  prueba distribuida: Kubernetes arranca N workers de JMeter (jmeter-workers.yaml),
 #                la carga se reparte entre ellos y al terminar se vuelven a apagar.
 #                Sin la opción, un solo pod de JMeter genera toda la carga (como siempre).
@@ -16,17 +18,21 @@ NS=lab-jmeter
 
 # Argumentos: escenario y objetivo por posición; --workers N en cualquier sitio
 NUM_WORKERS=0
+HOST=192.168.10.1
+PUERTO=30081
 POSICIONALES=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --workers)   NUM_WORKERS="${2:?Uso: --workers N}"; shift 2 ;;
     --workers=*) NUM_WORKERS="${1#--workers=}"; shift ;;
+    --host)      HOST="${2:?Uso: --host IP}"; shift 2 ;;
+    --puerto)    PUERTO="${2:?Uso: --puerto N}"; shift 2 ;;
     *)           POSICIONALES="$POSICIONALES $1"; shift ;;
   esac
 done
 set -- $POSICIONALES
 ESCENARIO="${1:-humo}"
-OBJETIVO="${2:-app}"
+OBJETIVO="${2:-externo}"
 case "$NUM_WORKERS" in
   ''|*[!0-9]*) echo "--workers necesita un número (0 = sin workers)"; exit 1 ;;
 esac
@@ -37,22 +43,26 @@ if [ ! -f "escenarios/$ESCENARIO.properties" ]; then
   exit 1
 fi
 
-# Plan (ConfigMap), app a la que apunta JMeter y criterios de aprobado de cada objetivo
+# Plan (ConfigMap) y criterios de aprobado. La app no está en este clúster: está en PC A
+# (host y puerto de arriba), así que no se busca su Service como en k8s/.
 case "$OBJETIVO" in
-  app)     PLAN=jmeter-plan;         HOST=app;      CRITERIOS=app ;;
-  storm)   PLAN=jmeter-plan-storm;   HOST=objetivo; CRITERIOS=objetivo
+  externo) PLAN=jmeter-plan-storm; CRITERIOS=objetivo
            if ! kubectl -n "$NS" get configmap jmeter-plan-storm >/dev/null 2>&1; then
              echo "Aún no hay plan cargado: ejecuta ./cargar-plan.sh <fichero.jmx>"
              exit 1
            fi ;;
-  *)       echo "Objetivo desconocido '$OBJETIVO': usa app o storm"; exit 1 ;;
+  *)       echo "Objetivo desconocido '$OBJETIVO': en el lab distribuido solo existe externo"; exit 1 ;;
 esac
-if [ "$HOST" = objetivo ] && ! kubectl -n "$NS" get deploy objetivo >/dev/null 2>&1; then
-  echo "No hay app objetivo desplegada: ./desplegar-objetivo.sh --imagen <imagen> | --jar <fichero.jar>"
-  exit 1
+# ¿Responde la app de PC A? Si no, la prueba solo daría errores
+if command -v curl >/dev/null; then
+  CODIGO=$(curl -s -o /dev/null -m 5 -w '%{http_code}' "http://$HOST:$PUERTO/actuator/health/readiness" || true)
+  if [ "$CODIGO" != 200 ]; then
+    echo "La app no responde en http://$HOST:$PUERTO/actuator/health/readiness (código: ${CODIGO:-ninguno})."
+    echo "Revisa PC A (../pc-a/desplegar.sh), la red y el firewall de Windows."
+    exit 1
+  fi
 fi
-# Puerto en el que escucha la app (el de su Service); el plan lo recibe como ${__P(port)}
-PUERTO=$(kubectl -n "$NS" get svc "$HOST" -o jsonpath='{.spec.ports[0].port}')
+echo "App de PC A: http://$HOST:$PUERTO (responde)"
 
 # Criterios de aprobado (MAX_ERRORES_PCT y MAX_P95_MS)
 . "criterios/$CRITERIOS.properties"
@@ -64,7 +74,7 @@ ID="$ESCENARIO-$OBJETIVO-$(date +%Y%m%d-%H%M%S)"
 WORKERS=""
 if [ "$NUM_WORKERS" -gt 0 ]; then
   if ! kubectl -n "$NS" get deploy jmeter-worker >/dev/null 2>&1; then
-    echo "Los workers no están desplegados: ./desplegar.sh (o kubectl apply -f jmeter-workers.yaml)"
+    echo "Los workers no están desplegados: ./desplegar.sh"
     exit 1
   fi
   # No tiene sentido tener más workers que usuarios (cada worker lleva al menos uno)
@@ -87,8 +97,7 @@ if [ "$NUM_WORKERS" -gt 0 ]; then
   echo "Workers listos: $WORKERS"
 fi
 
-# El master usa la misma imagen que los workers: la local (lab-jmeter) o la del registro si el
-# laboratorio se desplegó con REGISTRO=... ./desplegar.sh
+# El master usa la misma imagen que los workers (la que puso desplegar.sh, con su ETIQUETA)
 IMAGEN=$(kubectl -n "$NS" get deploy jmeter-worker -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)
 POLITICA=$(kubectl -n "$NS" get deploy jmeter-worker -o jsonpath='{.spec.template.spec.containers[0].imagePullPolicy}' 2>/dev/null || true)
 
@@ -103,7 +112,8 @@ sed -e "s/__ESCENARIO__/$ESCENARIO/g" -e "s/__PLAN__/$PLAN/g" -e "s/__HOST__/$HO
 
 echo "Escenario '$ESCENARIO' contra $OBJETIVO en marcha:"
 grep -v '^#' "escenarios/$ESCENARIO.properties" | grep . | sed 's/^/  /'
-echo "Dashboard: http://localhost:30000/d/lab-jmeter-k8s"
+IP_CONTROLLER=$(kubectl get nodes -l rol=controller -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+echo "Dashboard: http://$IP_CONTROLLER:30000/d/lab-jmeter-k8s"
 kubectl -n "$NS" wait --for=condition=ready pod -l job-name=jmeter --timeout=120s >/dev/null 2>&1 || true
 kubectl -n "$NS" logs -f job/jmeter
 
@@ -124,7 +134,7 @@ fi
 mkdir -p resultados
 POD=$(kubectl -n "$NS" get pod -l app=resultados -o jsonpath='{.items[0].metadata.name}')
 if kubectl -n "$NS" cp "$POD:/resultados/$ID" "resultados/$ID" >/dev/null 2>&1; then
-  echo "Resultados guardados en k8s/resultados/$ID (informe: informe/index.html)"
+  echo "Resultados guardados en cluster-bc/resultados/$ID (informe: informe/index.html)"
 else
   echo "No se pudieron copiar los resultados (siguen en el disco jmeter-resultados del clúster)"
 fi

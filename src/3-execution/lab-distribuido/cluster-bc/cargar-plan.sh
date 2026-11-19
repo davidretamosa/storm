@@ -1,11 +1,11 @@
 #!/bin/sh
 # Carga en el laboratorio el plan .jmx entregado por 2-processing (el grupo de IA) para
-# inyectarlo contra la app objetivo (la desplegada con desplegar-objetivo.sh).
-# Uso, desde src/3-execution/k8s:  ./cargar-plan.sh <fichero.jmx>
-# Después: ./lanzar-prueba.sh <escenario> storm
+# inyectarlo contra la app de PC A (la bankapp, ../pc-a).
+# Uso, en pcb desde lab-distribuido/cluster-bc:  ./cargar-plan.sh <fichero.jmx>
+# Después: ./lanzar-prueba.sh <escenario> externo [--workers N]
 #
 # El plan debe apuntar a la app con ${__P(host,...)} y ${__P(port,...)} (como los que genera
-# 2-processing): el laboratorio le pasa host=objetivo y el puerto de la app. Si no envía métricas a InfluxDB, se le
+# 2-processing): el laboratorio le pasa host=192.168.10.1 y port=30081 (PC A). Si no envía métricas a InfluxDB, se le
 # añade el Backend Listener al ejecutarlo (ver ejecutar-y-evaluar.sh).
 set -e
 PLAN="${1:?Uso: ./cargar-plan.sh <fichero.jmx>}"
@@ -17,11 +17,11 @@ export MSYS_NO_PATHCONV=1
 NS=lab-jmeter
 
 grep -q "<jmeterTestPlan" "$PLAN" || { echo "'$PLAN' no parece un plan de JMeter (.jmx)"; exit 1; }
-grep -q '__P(host' "$PLAN" || echo "Aviso: el plan no usa \${__P(host,...)}: apuntará a la app que tenga escrita dentro, no a la app objetivo del laboratorio."
+grep -q '__P(host' "$PLAN" || echo "Aviso: el plan no usa \${__P(host,...)}: apuntará a la app que tenga escrita dentro, no a la de PC A."
 
 mkdir -p planes
 cp "$PLAN" planes/storm.jmx
 kubectl -n "$NS" create configmap jmeter-plan-storm --from-file=plan.jmx=planes/storm.jmx \
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-echo "Plan cargado: $PLAN -> k8s/planes/storm.jmx"
-echo "Lánzalo con: ./lanzar-prueba.sh <escenario> storm"
+echo "Plan cargado: $PLAN -> cluster-bc/planes/storm.jmx"
+echo "Lánzalo con: ./lanzar-prueba.sh <escenario> externo [--workers N]"

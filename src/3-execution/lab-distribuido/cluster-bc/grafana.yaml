@@ -1,6 +1,7 @@
 # Grafana con datasources y dashboard creados desde ficheros.
 # Los ConfigMaps grafana-datasources y grafana-dashboards los crea desplegar.sh:
-# los datasources se reutilizan de lab-jmeter y el dashboard es grafana/lab-jmeter-k8s.json.
+# datasources en grafana/datasources.yml (Prometheus es el de PC A) y el dashboard es
+# grafana/lab-jmeter-k8s.json.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -16,9 +17,13 @@ spec:
       labels:
         app: grafana
     spec:
+      # Lab distribuido: va en el nodo controller (pcb)
+      nodeSelector:
+        rol: controller
       containers:
         - name: grafana
-          image: grafana/grafana:latest
+          image: grafana/grafana:11.3.0
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000
           readinessProbe:
@@ -51,4 +56,4 @@ spec:
   ports:
     - port: 3000
       targetPort: 3000
-      nodePort: 30000   # http://localhost:30000 (admin / admin)
+      nodePort: 30000   # http://192.168.10.2:30000 (admin / admin)

@@ -1,5 +1,7 @@
 # Discos persistentes del laboratorio: sobreviven a reinicios de pods y de Docker.
 # Se borran solo con ./quitar.sh (al borrar el namespace).
+# En k3s (local-path) cada disco vive en el nodo donde se usa por primera vez: todo lo que
+# los usa (InfluxDB, el Job de JMeter y este pod) va al nodo controller (pcb).
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -11,19 +13,8 @@ spec:
     requests:
       storage: 2Gi
 ---
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: prometheus-datos
-  namespace: lab-jmeter
-spec:
-  accessModes: ["ReadWriteOnce"]
-  resources:
-    requests:
-      storage: 2Gi
----
 # Resultados de cada prueba (informe HTML, .jtl, log y veredicto): los escribe el Job
-# de JMeter y lanzar-prueba.sh los copia al equipo en k8s/resultados/.
+# de JMeter y lanzar-prueba.sh los copia a pcb en cluster-bc/resultados/.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -52,9 +43,13 @@ spec:
       labels:
         app: resultados
     spec:
+      # Lab distribuido: va en el nodo controller (pcb)
+      nodeSelector:
+        rol: controller
       containers:
         - name: resultados
           image: busybox:1.36
+          imagePullPolicy: IfNotPresent
           command: ["sh", "-c", "sleep infinity"]
           volumeMounts:
             - name: resultados

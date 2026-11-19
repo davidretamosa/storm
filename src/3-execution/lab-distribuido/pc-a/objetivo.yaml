@@ -1,10 +1,10 @@
 # La aplicación objetivo: la app que STORM pone a prueba, sea cual sea.
-# No se aplica tal cual: desplegar-objetivo.sh rellena los huecos según la app que le den
+# No se aplica tal cual: desplegar.sh rellena los huecos según la app que le den
 # (una imagen de cualquier lenguaje o un .jar):
 #   __IMAGEN__    imagen de la app             __POLITICA__  cuándo descargarla
 #   __PUERTO__    puerto en el que escucha     __SONDA__     cómo saber que está lista
-# Dentro del clúster se llama siempre "objetivo": el plan de JMeter recibe host=objetivo y
-# port=<su puerto>, así que el mismo laboratorio sirve para cualquier app.
+# Se llama siempre "objetivo". JMeter (clúster 1) la ataca desde fuera por el NodePort:
+# host=192.168.10.1 port=30081.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -57,4 +57,4 @@ spec:
   ports:
     - port: __PUERTO__
       targetPort: __PUERTO__
-      nodePort: 30081   # http://localhost:30081 (en kind: localhost:40081)
+      nodePort: 30081   # http://192.168.10.1:30081

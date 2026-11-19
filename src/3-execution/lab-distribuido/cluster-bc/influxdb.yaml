@@ -15,9 +15,13 @@ spec:
       labels:
         app: influxdb
     spec:
+      # Lab distribuido: va en el nodo controller (pcb)
+      nodeSelector:
+        rol: controller
       containers:
         - name: influxdb
-          image: influxdb:1.8
+          image: influxdb:1.8.10
+          imagePullPolicy: IfNotPresent
           env:
             - name: INFLUXDB_DB
               value: jmeter

@@ -2,8 +2,8 @@
 # Con --workers N este pod es el master: reparte la prueba entre los workers
 # (jmeter-workers.yaml), recoge sus resultados y los evalúa igual que en modo normal.
 # El plan y los escenarios llegan desde ConfigMaps (los crea desplegar.sh):
-# jmeter-plan (app de prueba) o jmeter-plan-storm (plan de 2-processing), y jmeter-escenarios.
-# Para lanzarla: ./lanzar-prueba.sh <escenario> [app|storm]
+# jmeter-plan-storm (plan de 2-processing, ./cargar-plan.sh) y jmeter-escenarios.
+# Para lanzarla: ./lanzar-prueba.sh <escenario> externo [--workers N]
 # (el script sustituye los marcadores __ESCENARIO__, __PLAN__, __HOST__, __PUERTO__ y los criterios).
 # Al terminar, ejecutar-y-evaluar.sh comprueba los criterios de aprobado (criterios/):
 # si no se cumplen, el Job termina en estado Failed. Los resultados quedan en el disco
@@ -22,6 +22,9 @@ spec:
         app: jmeter
     spec:
       restartPolicy: Never
+      # Lab distribuido: el master va en el nodo controller (pcb), junto al disco de resultados
+      nodeSelector:
+        rol: controller
       containers:
         - name: jmeter
           image: lab-jmeter:latest
