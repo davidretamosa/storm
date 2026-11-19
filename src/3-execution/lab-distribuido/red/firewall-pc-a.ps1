@@ -6,3 +6,8 @@
 Remove-NetFirewallRule -DisplayName "STORM lab*" -ErrorAction SilentlyContinue
 New-NetFirewallRule -DisplayName "STORM lab - ping" -Direction Inbound -Protocol ICMPv4 -IcmpType 8 -RemoteAddress 192.168.10.0/24 -Action Allow
 New-NetFirewallRule -DisplayName "STORM lab - bankapp y Prometheus" -Direction Inbound -Protocol TCP -LocalPort 30081,30090 -RemoteAddress 192.168.10.0/24 -Action Allow
+# Si alguna vez se pulsó "Cancelar" en el aviso del firewall al instalar Docker Desktop, Windows
+# crea reglas que BLOQUEAN com.docker.backend.exe (el que atiende los NodePorts) en redes Públicas,
+# y un bloqueo gana a cualquier permiso: se desactivan (Enable-NetFirewallRule para deshacerlo).
+Get-NetFirewallRule -DisplayName "com.docker.backend.exe" -ErrorAction SilentlyContinue |
+  Where-Object { $_.Direction -eq 'Inbound' -and $_.Action -eq 'Block' } | Disable-NetFirewallRule
