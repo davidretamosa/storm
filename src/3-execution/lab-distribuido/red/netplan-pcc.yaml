@@ -1,0 +1,11 @@
+# pcc: /etc/netplan/60-lab.yaml (sudo chmod 600 y sudo netplan apply).
+# Red del lab STORM: IP fija, SIN gateway. Internet sale por eth1 (Default Switch, DHCP).
+# Antes, para que cloud-init no reescriba la red:
+#   echo 'network: {config: disabled}' | sudo tee /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+# En PCs físicos: comprobar el nombre de la interfaz del lab con ip -br addr (VirtualBox: enp0s3...).
+network:
+  version: 2
+  ethernets:
+    eth0:
+      dhcp4: false
+      addresses: [192.168.10.3/24]
