@@ -88,3 +88,13 @@ def test_lists_are_empty_unless_the_dto_asks_for_elements():
 
 def test_unknown_types_are_still_skipped():
     assert schema_field_model("thing", {"type": "Object", "rules": {}}) is None
+
+
+def test_entity_of_dto_names():
+    from jar_parser.parser import entity_of
+    classes = {name: {} for name in ["a.Owner", "a.OwnerDto", "a.OwnerFieldsDto", "a.PetType", "a.PetTypeDto", "a.Thing"]}
+    assert entity_of(classes, "a.OwnerDto") == "a.Owner"
+    assert entity_of(classes, "a.OwnerFieldsDto") == "a.Owner"      # OwnerFields -> Owner
+    assert entity_of(classes, "a.PetTypeDto") == "a.PetType"
+    assert entity_of(classes, "a.Thing") is None                    # no es un DTO
+    assert entity_of({"a.OwnerDto": {}}, "a.OwnerDto") is None      # sin entidad

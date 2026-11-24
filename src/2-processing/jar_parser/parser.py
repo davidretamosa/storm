@@ -207,13 +207,23 @@ def entity_of(classes, class_name):
     """La entidad a la que corresponde un DTO ('OwnerDto' -> 'Owner'), si hay una sola con ese nombre.
 
     Muchas apps validan en la entidad y no en el DTO (Hibernate falla al guardar, y la API responde 500).
+    También vale 'OwnerFieldsDto' -> 'OwnerFields' -> 'Owner': se van quitando palabras del final.
     """
     simple = class_name.split(".")[-1]
     for suffix in DTO_SUFFIXES:
         if simple.endswith(suffix) and len(simple) > len(suffix):
-            wanted = simple[:-len(suffix)]
-            found = [name for name in classes if name.split(".")[-1] == wanted and name != class_name]
+            simple = simple[:-len(suffix)]
+            break
+    else:
+        return None
+    words = re.findall(r"[A-Z][a-z0-9]*|[a-z0-9]+", simple)
+    while words:
+        wanted = "".join(words)
+        found = [name for name in classes
+                 if name.split(".")[-1] == wanted and name != class_name and not name.split(".")[-1].endswith(DTO_SUFFIXES)]
+        if found:
             return found[0] if len(found) == 1 else None
+        words = words[:-1]
     return None
 
 
