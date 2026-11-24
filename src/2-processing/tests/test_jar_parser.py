@@ -27,7 +27,9 @@ def test_finds_all_endpoints_of_demo_jar():
 def test_request_bodies_with_dto_fields():
     endpoints = parse_jar(DEMO_JAR)
     deposit = find(endpoints, "POST", "/api/accounts/{id}/deposit")
-    assert deposit["body"] == {"type": "com.pae.bankapp.dto.DepositRequest", "fields": {"amount": "BigDecimal"}}
+    assert deposit["body"]["type"] == "com.pae.bankapp.dto.DepositRequest"
+    assert deposit["body"]["fields"] == {"amount": "BigDecimal"}
+    assert deposit["body"]["schema"]["amount"]["type"] == "BigDecimal"
     transfer = find(endpoints, "POST", "/api/transfers")
     assert transfer["body"]["fields"] == {
         "fromAccountId": "Long", "toAccountId": "Long", "amount": "BigDecimal", "concept": "String",

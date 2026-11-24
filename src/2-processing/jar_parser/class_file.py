@@ -20,6 +20,7 @@ PRIMITIVES = {
     "I": "int", "J": "long", "S": "short", "Z": "boolean", "V": "void",
 }
 ACC_STATIC = 0x0008
+ACC_ENUM = 0x4000   # en un campo: es una constante de un enum
 
 
 class Reader:
@@ -67,9 +68,9 @@ def read_constant_pool(reader):
         elif tag == 3:                    # Integer
             pool[i] = struct.unpack(">i", reader.bytes(4))[0]
         elif tag == 4:                    # Float
-            reader.bytes(4)
+            pool[i] = struct.unpack(">f", reader.bytes(4))[0]
         elif tag in (5, 6):               # Long, Double: ocupan dos posiciones
-            reader.bytes(8)
+            pool[i] = struct.unpack(">q" if tag == 5 else ">d", reader.bytes(8))[0]
             i += 1
         elif tag == 7:                    # Class: posición del texto con su nombre
             pool[i] = ("class", reader.u2())
@@ -117,9 +118,8 @@ def read_element_value(reader, pool):
         return pool[reader.u2()]
     if tag in "BCISZ":                    # entero / booleano
         return pool[reader.u2()]
-    if tag in "DFJ":                      # double / float / long (no los necesitamos)
-        reader.u2()
-        return None
+    if tag in "DFJ":                      # double / float / long (@Min(1), @DecimalMax...)
+        return pool[reader.u2()]
     if tag == "e":                        # enum, p. ej. RequestMethod.GET -> "GET"
         reader.u2()                       # tipo del enum
         return pool[reader.u2()]
@@ -145,9 +145,11 @@ def read_annotation(reader, pool):
 def read_attributes(reader, pool):
     """Lee los atributos de una clase, campo o método y devuelve solo las anotaciones:
 
-    {"annotations": [...], "param_annotations": [[...], [...], ...]}
+    {"annotations": [...], "param_annotations": [[...], [...], ...], "signature": "..." | None}
+
+    "signature" lleva los genéricos: List<Role> se guarda como "Ljava/util/List<Lcom/x/Role;>;".
     """
-    result = {"annotations": [], "param_annotations": []}
+    result = {"annotations": [], "param_annotations": [], "signature": None}
     for _ in range(reader.u2()):
         name = pool[reader.u2()]
         length = reader.u4()
@@ -158,6 +160,8 @@ def read_attributes(reader, pool):
                 result["param_annotations"].append(
                     [read_annotation(reader, pool) for _ in range(reader.u2())]
                 )
+        elif name == "Signature":
+            result["signature"] = pool[reader.u2()]
         else:
             reader.bytes(length)  # el código del método y demás: no lo necesitamos
     return result
@@ -169,7 +173,8 @@ def read_class(data):
     {
       "name": "com.pae.bankapp.controller.AccountController",
       "annotations": [{"type": ..., "values": {...}}, ...],
-      "fields":  [{"name": "amount", "type": "java.math.BigDecimal", "static": False}, ...],
+      "fields":  [{"name": "amount", "type": "java.math.BigDecimal", "static": False, "enum": False,
+                   "annotations": [...], "signature": None}, ...],
       "methods": [{"name": "deposit", "params": ["java.lang.Long", "com.pae...DepositRequest"],
                    "annotations": [...], "param_annotations": [[...], [...]]}, ...],
     }
@@ -184,7 +189,8 @@ def read_class(data):
     reader.u2()  # modificadores de la clase (public, final...)
     this_class = pool[reader.u2()]
     name = pool[this_class[1]].replace("/", ".")
-    reader.u2()  # superclase
+    super_index = reader.u2()  # superclase (0 = ninguna)
+    superclass = pool[pool[super_index][1]].replace("/", ".") if super_index else None
     interfaces = []
     for _ in range(reader.u2()):  # interfaces que implementa (o extiende, si es una interfaz)
         interfaces.append(pool[pool[reader.u2()][1]].replace("/", "."))
@@ -194,8 +200,12 @@ def read_class(data):
         access = reader.u2()
         field_name = pool[reader.u2()]
         field_type = descriptor_to_type(pool[reader.u2()])
-        read_attributes(reader, pool)
-        fields.append({"name": field_name, "type": field_type, "static": bool(access & ACC_STATIC)})
+        attributes = read_attributes(reader, pool)
+        fields.append({
+            "name": field_name, "type": field_type, "static": bool(access & ACC_STATIC),
+            "enum": bool(access & ACC_ENUM),
+            "annotations": attributes["annotations"], "signature": attributes["signature"],
+        })
 
     methods = []
     for _ in range(reader.u2()):
@@ -211,4 +221,4 @@ def read_class(data):
         })
 
     class_annotations = read_attributes(reader, pool)["annotations"]
-    return {"name": name, "interfaces": interfaces, "annotations": class_annotations, "fields": fields, "methods": methods}
+    return {"name": name, "super": superclass, "interfaces": interfaces, "annotations": class_annotations, "fields": fields, "methods": methods}

@@ -108,13 +108,159 @@ def dto_fields(classes, class_name):
     return fields
 
 
+# ---------------------------------------------------------------------------
+# Esquema de un DTO: tipo de cada campo y sus reglas de validación (@Pattern, @Size, @Min...)
+# ---------------------------------------------------------------------------
+
+VALIDATION = ("jakarta.validation.constraints.", "javax.validation.constraints.")
+COLLECTIONS = {
+    "java.util.List", "java.util.Set", "java.util.Collection", "java.util.ArrayList",
+    "java.util.HashSet", "java.util.LinkedList", "java.util.SortedSet", "java.util.LinkedHashSet",
+}
+MAX_DEPTH = 3   # niveles de objetos dentro de objetos
+
+
+def field_rules(annotations):
+    """Reglas de validación que declaran las anotaciones de un campo (o de su getter):
+
+    [@Pattern(regexp="^[0-9]*$"), @Size(max=20)] -> {"pattern": "^[0-9]*$", "max_len": 20}
+
+    min/max valen para números; min_len/max_len, para textos y listas.
+    """
+    rules = {}
+
+    def lower(key, value):
+        rules[key] = value if key not in rules else max(rules[key], value)
+
+    def upper(key, value):
+        rules[key] = value if key not in rules else min(rules[key], value)
+
+    for annotation in annotations:
+        full = annotation["type"]
+        name = full.split(".")[-1]
+        values = annotation["values"]
+        if full.startswith(VALIDATION):
+            if name == "Pattern" and values.get("regexp"):
+                rules["pattern"] = values["regexp"]
+            elif name == "Size":
+                if values.get("min", 0) > 0:
+                    lower("min_len", values["min"])
+                if "max" in values:
+                    upper("max_len", values["max"])
+            elif name == "Min":
+                lower("min", values.get("value", 0))
+            elif name == "Max":
+                upper("max", values.get("value", 0))
+            elif name in ("DecimalMin", "DecimalMax"):
+                try:
+                    number = float(values.get("value"))
+                except (TypeError, ValueError):
+                    continue
+                (lower if name == "DecimalMin" else upper)("min" if name == "DecimalMin" else "max", number)
+            elif name == "Positive":
+                lower("min", 1)
+            elif name == "PositiveOrZero":
+                lower("min", 0)
+            elif name == "Negative":
+                upper("max", -1)
+            elif name == "NegativeOrZero":
+                upper("max", 0)
+            elif name == "Digits":
+                rules["decimals"] = values.get("fraction", 0)
+            elif name == "Email":
+                rules["email"] = True
+            elif name == "NotBlank":
+                lower("min_len", 1)
+            elif name == "NotEmpty":
+                lower("min_len", 1)
+            elif name == "Future" or name == "FutureOrPresent":
+                rules["future"] = True
+            elif name == "Past" or name == "PastOrPresent":
+                rules["past"] = True
+        elif name == "JsonFormat" and values.get("pattern"):
+            rules["format"] = values["pattern"]
+        elif name == "DateTimeFormat" and (values.get("pattern") or values.get("value")):
+            rules.setdefault("format", values.get("pattern") or values.get("value"))
+    return rules
+
+
+def json_name(annotations, default):
+    """Nombre del campo en el JSON: el de @JsonProperty("x") si lo lleva."""
+    for annotation in annotations:
+        if annotation["type"].endswith(".JsonProperty") and annotation["values"].get("value"):
+            return annotation["values"]["value"]
+    return default
+
+
+def element_type(type_name, signature):
+    """De qué son los elementos de una lista: List<Role> -> 'com.x.Role' ; Role[] -> 'com.x.Role'."""
+    if type_name.endswith("[]"):
+        return type_name[:-2]
+    match = re.search(r"<[+*-]?L([^<;]+)", signature or "")
+    return match.group(1).replace("/", ".") if match else None
+
+
+def type_info(classes, type_name, signature, depth, stack):
+    """Qué es un tipo: texto, número, lista (de qué), enum (qué valores) u objeto (qué campos)."""
+    info = {"type": type_name.split(".")[-1]}
+    if type_name in COLLECTIONS or type_name.endswith("[]"):
+        info["collection"] = True
+        element = element_type(type_name, signature)
+        info["element"] = type_info(classes, element, None, depth + 1, stack) if element else None
+        return info
+    cls = classes.get(type_name)
+    if cls is not None and depth <= MAX_DEPTH and type_name not in stack:
+        constants = [f["name"] for f in cls["fields"] if f["enum"]]
+        if constants:
+            info["enum"] = constants
+        else:
+            info["fields"] = dto_schema(classes, type_name, depth + 1, stack + (type_name,))
+    return info
+
+
+def dto_schema(classes, class_name, depth=0, stack=()):
+    """Campos de un DTO con su tipo y sus reglas de validación. None si la clase no está en el .jar.
+
+    {"telephone": {"type": "String", "rules": {"pattern": "^[0-9]*$", "max_len": 20}},
+     "specialties": {"type": "List", "collection": True, "element": {...}, "rules": {}}, ...}
+
+    Incluye los campos heredados. Las reglas se leen del campo y de su getter (los DTO generados
+    por OpenAPI llevan las anotaciones en el getter).
+    """
+    if class_name not in classes:
+        return None
+    chain = []
+    current = class_name
+    while current in classes and current not in chain:
+        chain.insert(0, current)         # primero la clase de arriba (la que se hereda)
+        current = classes[current].get("super")
+
+    schema = {}
+    for owner in chain:
+        info = classes[owner]
+        getters = {m["name"]: m["annotations"] for m in info["methods"]}
+        for field in info["fields"]:
+            if field["static"] or field["enum"]:
+                continue
+            cap = field["name"][:1].upper() + field["name"][1:]
+            annotations = field["annotations"] + getters.get("get" + cap, []) + getters.get("is" + cap, [])
+            entry = type_info(classes, field["type"], field["signature"], depth, stack + (class_name,))
+            entry["rules"] = field_rules(annotations)
+            schema[json_name(annotations, field["name"])] = entry
+    return schema
+
+
 def request_body(classes, method):
     """Si el método tiene un parámetro con @RequestBody, su tipo y sus campos."""
     for position, annotations in enumerate(method["param_annotations"]):
         for annotation in annotations:
             if annotation["type"] == SPRING + "RequestBody":
                 body_type = method["params"][position]
-                return {"type": body_type, "fields": dto_fields(classes, body_type)}
+                return {
+                    "type": body_type,
+                    "fields": dto_fields(classes, body_type),
+                    "schema": dto_schema(classes, body_type),
+                }
     return None
 
 
