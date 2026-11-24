@@ -133,6 +133,7 @@ def _resource_tokens(resource):
             continue
 
         tokens.update(words)
+        tokens.update(singularize(word) for word in words)
 
         # addevent -> event
         # createvenue -> venue
@@ -188,8 +189,21 @@ def resource_of_param(endpoint, param, resources=None):
             if param_name in _resource_tokens(resource)
         ]
 
+        # Si varios encajan, gana el que lleva el nombre en su último trozo
+        if len(matches) > 1:
+            matches = [
+                resource for resource in matches
+                if param_name in _resource_tokens(resource.rstrip("/").split("/")[-1])
+            ]
+
         if len(matches) == 1:
             return matches[0]
+
+        # {ownerId}, {petId}...: el nombre dice de qué recurso es. Si nadie crea ese recurso, no se
+        # adivina por el resto de la ruta (en /owners/{ownerId}/pets/{petId}/visits se acababa
+        # usando el id de una visita para el dueño y para la mascota). Se saltará la petición.
+        if re.search(r"(_id|id)$", param.lower()):
+            return None
 
     # 2. Si el parámetro es genérico, comparar los nombres de las rutas.
     route_tokens = _route_tokens(endpoint)

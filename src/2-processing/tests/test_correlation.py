@@ -289,3 +289,25 @@ def test_unlinked_params_reports_uncovered_requests():
     assert unlinked_params({"states": states}, corr, {}) == ["GET /api/stats/{year}"]
     # Si los logs traen valores para el parámetro, sí se puede probar
     assert unlinked_params({"states": states}, corr, {"GET /api/stats/{year}": {"year": [["2025", 1.0]]}}) == []
+
+
+def test_named_params_are_not_guessed_from_the_rest_of_the_route():
+    """PetClinic: en /owners/{ownerId}/pets/{petId}/visits, ownerId y petId se enlazaban al id de las visitas."""
+    states = [
+        "POST /api/owners", "POST /api/visits", "GET /api/owners/{ownerId}",
+        "POST /api/owners/{ownerId}/pets/{petId}/visits", "GET /api/pettypes/{petTypeId}", "POST /api/pettypes",
+        "GET /api/specialties/{specialtyId}", "POST /api/specialties",
+    ]
+    corr = build_correlation({"states": states}, {})
+    pr = corr["path_resources"]
+    assert pr["POST /api/owners/{ownerId}/pets/{petId}/visits"] == {"ownerId": "/api/owners"}   # petId: nadie crea mascotas
+    assert pr["GET /api/owners/{ownerId}"] == {"ownerId": "/api/owners"}
+    assert pr["GET /api/pettypes/{petTypeId}"] == {"petTypeId": "/api/pettypes"}
+    assert pr["GET /api/specialties/{specialtyId}"] == {"specialtyId": "/api/specialties"}
+
+
+def test_generic_id_is_still_resolved_by_the_route():
+    states = ["POST /api/accounts", "GET /api/accounts/{id}", "POST /api/transfers", "GET /api/transfers/{id}"]
+    pr = build_correlation({"states": states}, {})["path_resources"]
+    assert pr["GET /api/accounts/{id}"] == {"id": "/api/accounts"}
+    assert pr["GET /api/transfers/{id}"] == {"id": "/api/transfers"}
