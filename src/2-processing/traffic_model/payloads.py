@@ -7,6 +7,7 @@ Funciones que usa main.py:
 - build_path_params(tabla)            -> valores de los {id}        (sección 2)
 - build_body_models(tabla, endpoints) -> cómo es cada body          (secciones 3 y 4)
 """
+import datetime
 import json
 import re
 from collections import Counter
@@ -316,10 +317,33 @@ def format_java_date(pattern, year, month, day):
     return "".join(out)
 
 
-def date_value(java_type, rules):
-    """Fecha o fecha-hora de ejemplo, con el formato que pida @JsonFormat y respetando @Future/@Past."""
-    kind = "future" if rules.get("future") else "past" if rules.get("past") else "neutral"
-    year, month, day = SAMPLE_DATES[kind]
+DATE_VARIETY = 365   # cuántas fechas distintas se reparten (un año)
+
+
+def date_values(java_type, rules, name=""):
+    """Fechas distintas para un campo de fecha, una por día durante un año.
+
+    Con una sola fecha fija, las apps con calendario (reservas, citas) responden 409 en cuanto se
+    ocupa ese día. Las fechas van hacia delante (hacia atrás si el DTO pide @Past o es una fecha de nacimiento).
+    """
+    values = []
+    for offset in range(DATE_VARIETY):
+        value = date_value(java_type, rules, name, offset)
+        if value not in values:
+            values.append(value)
+    return values
+
+
+def date_value(java_type, rules, name="", offset=0):
+    """Fecha o fecha-hora de ejemplo, con el formato que pida @JsonFormat y respetando @Future/@Past.
+
+    offset: días que se separa de la fecha base (hacia delante, o hacia atrás si es una fecha pasada).
+    """
+    past = rules.get("past") or re.search(r"birth|dob", name, re.IGNORECASE)
+    kind = "future" if rules.get("future") else "past" if past else "neutral"
+    base = datetime.date(*SAMPLE_DATES[kind])
+    day_date = base - datetime.timedelta(days=offset) if kind == "past" else base + datetime.timedelta(days=offset)
+    year, month, day = day_date.year, day_date.month, day_date.day
     if rules.get("format"):
         return format_java_date(rules["format"], year, month, day)
     date = f"{year}-{month:02d}-{day:02d}"
@@ -420,5 +444,6 @@ def schema_field_model(name, entry):
     if java_type in TEXT_TYPES:
         return {"type": "choice", "values": [[text_value(java_type, name, rules), 1.0]], "presence": 1.0}
     if java_type in DATE_TYPES:
-        return {"type": "choice", "values": [[date_value(java_type, rules), 1.0]], "presence": 1.0}
+        dates = date_values(java_type, rules, name)
+        return {"type": "choice", "values": [[value, 1 / len(dates)] for value in dates], "presence": 1.0}
     return default_field_model(name, java_type)

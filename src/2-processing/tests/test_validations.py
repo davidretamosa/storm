@@ -73,7 +73,11 @@ def test_rules_of_the_entity_with_the_same_name_are_added():
 def test_numbers_and_dates_follow_the_rules():
     booking = models()["POST /api/bookings"]
     assert (booking["roomNumber"]["min"], booking["roomNumber"]["max"]) == (1, 9)
-    assert only(booking["checkIn"]) == "15/06/2030"          # dd/MM/yyyy y en el futuro
+    dates = [value for value, _ in booking["checkIn"]["values"]]
+    assert dates[0] == "15/06/2030"                           # dd/MM/yyyy y en el futuro
+    assert len(set(dates)) == 365                             # una fecha distinta por día: sin 409 por reservas repetidas
+    assert dates[1] == "16/06/2030" and dates[-1] == "14/06/2031"
+    assert all(re.fullmatch(r"\d\d/\d\d/(2030|2031)", value) for value in dates)
     assert re.fullmatch(r"[^@]+@[^@]+\.[a-z]+", only(booking["guestEmail"]))
     assert [value for value, _ in booking["status"]["values"]] == ["ACTIVE", "CLOSED"]
 
@@ -98,3 +102,9 @@ def test_entity_of_dto_names():
     assert entity_of(classes, "a.PetTypeDto") == "a.PetType"
     assert entity_of(classes, "a.Thing") is None                    # no es un DTO
     assert entity_of({"a.OwnerDto": {}}, "a.OwnerDto") is None      # sin entidad
+
+
+def test_past_dates_go_backwards():
+    model = schema_field_model("birthDate", {"type": "LocalDate", "rules": {}})
+    dates = [value for value, _ in model["values"]]
+    assert dates[0] == "2020-06-15" and dates[1] == "2020-06-14"
