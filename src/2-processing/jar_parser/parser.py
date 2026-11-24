@@ -167,6 +167,7 @@ def field_rules(annotations):
                 upper("max", 0)
             elif name == "Digits":
                 rules["decimals"] = values.get("fraction", 0)
+                rules["digits"] = values.get("integer", 0)
             elif name == "Email":
                 rules["email"] = True
             elif name == "NotBlank":
@@ -182,6 +183,38 @@ def field_rules(annotations):
         elif name == "DateTimeFormat" and (values.get("pattern") or values.get("value")):
             rules.setdefault("format", values.get("pattern") or values.get("value"))
     return rules
+
+
+DTO_SUFFIXES = ("Dto", "DTO", "Request", "Response", "Input", "Form", "Resource", "Payload")
+
+
+def merge_rules(own, other):
+    """Junta dos juegos de reglas del mismo campo: vale un valor que cumpla las dos."""
+    merged = dict(own)
+    for key, value in other.items():
+        if key not in merged:
+            merged[key] = value
+        elif key in ("min", "min_len"):
+            merged[key] = max(merged[key], value)
+        elif key in ("max", "max_len", "digits"):
+            merged[key] = min(merged[key], value)
+        elif key == "pattern" and merged[key] != value:
+            merged["patterns"] = merged.get("patterns", []) + [value]
+    return merged
+
+
+def entity_of(classes, class_name):
+    """La entidad a la que corresponde un DTO ('OwnerDto' -> 'Owner'), si hay una sola con ese nombre.
+
+    Muchas apps validan en la entidad y no en el DTO (Hibernate falla al guardar, y la API responde 500).
+    """
+    simple = class_name.split(".")[-1]
+    for suffix in DTO_SUFFIXES:
+        if simple.endswith(suffix) and len(simple) > len(suffix):
+            wanted = simple[:-len(suffix)]
+            found = [name for name in classes if name.split(".")[-1] == wanted and name != class_name]
+            return found[0] if len(found) == 1 else None
+    return None
 
 
 def json_name(annotations, default):
@@ -237,17 +270,36 @@ def dto_schema(classes, class_name, depth=0, stack=()):
 
     schema = {}
     for owner in chain:
-        info = classes[owner]
-        getters = {m["name"]: m["annotations"] for m in info["methods"]}
-        for field in info["fields"]:
-            if field["static"] or field["enum"]:
-                continue
-            cap = field["name"][:1].upper() + field["name"][1:]
-            annotations = field["annotations"] + getters.get("get" + cap, []) + getters.get("is" + cap, [])
+        for field, annotations in annotated_fields(classes, owner):
             entry = type_info(classes, field["type"], field["signature"], depth, stack + (class_name,))
             entry["rules"] = field_rules(annotations)
             schema[json_name(annotations, field["name"])] = entry
+
+    # Reglas de la entidad con el mismo nombre (OwnerDto -> Owner), campo a campo
+    entity = entity_of(classes, class_name)
+    if entity:
+        entity_chain = []
+        current = entity
+        while current in classes and current not in entity_chain:
+            entity_chain.insert(0, current)
+            current = classes[current].get("super")
+        for owner in entity_chain:
+            for field, annotations in annotated_fields(classes, owner):
+                entry = schema.get(json_name(annotations, field["name"]))
+                if entry is not None and not entry.get("fields") and not entry.get("collection"):
+                    entry["rules"] = merge_rules(entry["rules"], field_rules(annotations))
     return schema
+
+
+def annotated_fields(classes, class_name):
+    """Los campos de UNA clase con sus anotaciones y las de su getter."""
+    info = classes[class_name]
+    getters = {m["name"]: m["annotations"] for m in info["methods"]}
+    for field in info["fields"]:
+        if field["static"] or field["enum"]:
+            continue
+        cap = field["name"][:1].upper() + field["name"][1:]
+        yield field, field["annotations"] + getters.get("get" + cap, []) + getters.get("is" + cap, [])
 
 
 def request_body(classes, method):

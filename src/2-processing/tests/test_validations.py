@@ -46,7 +46,8 @@ def test_parser_reads_validation_rules_from_fields_and_getters():
     endpoints = {e["endpoint"]: e for e in parse_jar(JAR)}
     owner = endpoints["/api/owners"]["body"]["schema"]
     assert owner["firstName"]["rules"] == {"min_len": 1, "max_len": 30}              # anotación en el campo
-    assert owner["telephone"]["rules"] == {"pattern": "^[0-9]*$", "max_len": 20}      # anotación en el getter
+    assert owner["telephone"]["rules"]["pattern"] == "^[0-9]*$"                       # anotación en el getter
+    assert owner["telephone"]["rules"]["max_len"] == 20
     assert "id" in owner                                                              # campo heredado
     booking = endpoints["/api/bookings"]["body"]["schema"]
     assert booking["roomNumber"]["rules"] == {"min": 1, "max": 9}
@@ -57,7 +58,16 @@ def test_parser_reads_validation_rules_from_fields_and_getters():
 def test_owner_phone_matches_its_pattern():
     owner = models()["POST /api/owners"]
     assert re.fullmatch(r"^[0-9]*$", only(owner["telephone"]))
+    assert re.fullmatch(r"\d{10}", only(owner["telephone"]))      # la regla de la entidad Owner también
     assert 1 <= len(only(owner["firstName"])) <= 30
+
+
+def test_rules_of_the_entity_with_the_same_name_are_added():
+    """El DTO (OwnerDto) solo pide dígitos; la entidad (Owner) pide exactamente 10 y @Digits(integer=5)."""
+    owner = {e["endpoint"]: e for e in parse_jar(JAR)}["/api/owners"]["body"]["schema"]
+    assert owner["telephone"]["rules"]["pattern"] == "^[0-9]*$"
+    assert owner["telephone"]["rules"]["patterns"] == ["\\d{10}"]
+    assert re.fullmatch(r"\d{5}", only(models()["POST /api/owners"]["zip"]))
 
 
 def test_numbers_and_dates_follow_the_rules():

@@ -338,10 +338,15 @@ def text_value(java_type, name, rules):
     max_len = rules.get("max_len")
     if java_type == "UUID":
         return "123e4567-e89b-12d3-a456-426614174000"
-    if rules.get("pattern"):
-        value = regex_sample(rules["pattern"], min_len, max_len)
-        if value is not None:
-            return value
+    patterns = ([rules["pattern"]] if rules.get("pattern") else []) + rules.get("patterns", [])
+    if rules.get("digits") and not patterns:
+        patterns = [r"\d{%d}" % rules["digits"]]       # @Digits en un texto: exactamente esas cifras
+    if patterns:
+        # Un texto que cumpla todas las expresiones a la vez
+        for pattern in patterns:
+            value = regex_sample(pattern, min_len, max_len)
+            if value is not None and all(re.fullmatch(other, value) for other in patterns):
+                return value
     if rules.get("email") or "email" in name.lower() and not rules.get("pattern"):
         value = "test@example.com"
     else:
