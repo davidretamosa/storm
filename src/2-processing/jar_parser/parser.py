@@ -170,10 +170,11 @@ def field_rules(annotations):
                 rules["digits"] = values.get("integer", 0)
             elif name == "Email":
                 rules["email"] = True
-            elif name == "NotBlank":
+            elif name == "NotBlank" or name == "NotEmpty":
                 lower("min_len", 1)
-            elif name == "NotEmpty":
-                lower("min_len", 1)
+                rules["required"] = True
+            elif name == "NotNull":
+                rules["required"] = True
             elif name == "Future" or name == "FutureOrPresent":
                 rules["future"] = True
             elif name == "Past" or name == "PastOrPresent":
@@ -196,6 +197,8 @@ def merge_rules(own, other):
             merged[key] = value
         elif key in ("min", "min_len"):
             merged[key] = max(merged[key], value)
+        elif key == "required":
+            merged[key] = True
         elif key in ("max", "max_len", "digits"):
             merged[key] = min(merged[key], value)
         elif key == "pattern" and merged[key] != value:
@@ -296,7 +299,7 @@ def dto_schema(classes, class_name, depth=0, stack=()):
         for owner in entity_chain:
             for field, annotations in annotated_fields(classes, owner):
                 entry = schema.get(json_name(annotations, field["name"]))
-                if entry is not None and not entry.get("fields") and not entry.get("collection"):
+                if entry is not None:
                     entry["rules"] = merge_rules(entry["rules"], field_rules(annotations))
     return schema
 

@@ -420,7 +420,8 @@ def schema_field_model(name, entry):
         items = []
         element = entry.get("element")
         if rules.get("min_len", 0) >= 1 and element:
-            model = schema_field_model(name, element)
+            # El elemento de una lista se manda siempre (la lista ya lo pide), aunque sea un objeto
+            model = schema_field_model(name, dict(element, rules={**element.get("rules", {}), "required": True}))
             if model is not None:
                 items = [static_value(model)]
         return {"type": "choice", "values": [[items, 1.0]], "presence": 1.0}
@@ -430,6 +431,11 @@ def schema_field_model(name, entry):
         return {"type": "choice", "values": [[value, 1 / len(constants)] for value in constants], "presence": 1.0}
 
     if entry.get("fields") is not None:
+        # Un objeto anidado suele ser una referencia a otra entidad ("category": {"category_id": 1}).
+        # Con un id inventado la app falla (clave foránea inexistente), así que solo se manda si el DTO
+        # lo exige (@NotNull); si es opcional se omite.
+        if not rules.get("required"):
+            return None
         nested = {}
         for field_name, field_entry in entry["fields"].items():
             model = schema_field_model(field_name, field_entry)

@@ -87,7 +87,8 @@ def test_lists_are_empty_unless_the_dto_asks_for_elements():
     assert only(vet["specialties"]) == []                    # @NotNull: vale una lista vacía
     booking = models()["POST /api/bookings"]
     assert only(booking["extras"]) == [{"id": 1, "name": "test"}]   # @NotEmpty: un elemento
-    assert only(booking["main"]) == {"id": 1, "name": "test"}       # objeto anidado
+    assert only(booking["main"]) == {"id": 1, "name": "test"}       # objeto anidado obligatorio (@NotNull)
+    assert "optionalRef" not in booking                              # objeto anidado opcional: se omite (suele ser una referencia a otra entidad)
 
 
 def test_unknown_types_are_still_skipped():

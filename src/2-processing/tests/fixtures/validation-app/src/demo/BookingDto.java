@@ -9,5 +9,6 @@ public class BookingDto {
   @Future @JsonFormat(pattern = "dd/MM/yyyy") private LocalDate checkIn;
   private Status status;
   @NotEmpty private List<SpecialtyDto> extras;
-  private SpecialtyDto main;
+  @NotNull private SpecialtyDto main;
+  private SpecialtyDto optionalRef;
 }
