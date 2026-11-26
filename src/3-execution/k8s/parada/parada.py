@@ -87,6 +87,7 @@ import re
 import threading
 import time
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlencode
 
@@ -242,20 +243,42 @@ def modo_fuerte():
         return parada.get("modo") == "fuerte"
 
 
-def escalera(motivo, fuerte=False):
+def escalera(motivo, fuerte=False, pod=None):
     try:
-        pod = pod_en_marcha()
+        pod = pod or pod_en_marcha()
         if fuerte:
             if pod:
                 with lock:
                     parada["pod"] = pod
-                nivel(0, "marcando la prueba como abortada")
-                intentar(pod, ["sh", "-c", 'printf "%s\\n" "$0" > "$RESULTADOS/abortada.txt"', motivo])
-            nivel(3, "borrando el Job y el pod sin esperar a la parada ordenada")
-            borrar_job()
+                nivel(0, "marcando la prueba como abortada en segundo plano")
+                threading.Thread(
+                    target=intentar,
+                    args=(pod, ["sh", "-c", 'printf "%s\\n" "$0" > "$RESULTADOS/abortada.txt"', motivo]),
+                    name="marca-prueba-abortada",
+                    daemon=True,
+                ).start()
+
+            nivel(3, "borrando Job y pod y apagando workers")
+            fallos = []
+            try:
+                borrar_job()
+            except Exception as e:
+                log(evento="parada_fuerte_fallo", recurso="job", error=repr(e))
+                fallos.append("job")
+
+            tareas = {"workers": apagar_workers}
             if pod:
-                matar_pod(pod)
-            apagar_workers()
+                tareas["pod"] = lambda: matar_pod(pod)
+            with ThreadPoolExecutor(max_workers=len(tareas)) as executor:
+                pendientes = {executor.submit(tarea): nombre for nombre, tarea in tareas.items()}
+                for futuro, nombre in pendientes.items():
+                    try:
+                        futuro.result()
+                    except Exception as e:
+                        log(evento="parada_fuerte_fallo", recurso=nombre, error=repr(e))
+                        fallos.append(nombre)
+            if fallos:
+                raise RuntimeError("falló la parada fuerte de: " + ", ".join(fallos))
             final("terminada", "la prueba ha sido parada por la fuerza")
             return
 
@@ -298,7 +321,8 @@ def final(estado, detalle):
 
 def iniciar(motivo, fuerte=False):
     """Arranca la parada. Devuelve (código HTTP, respuesta)."""
-    en_marcha = bool(pod_en_marcha() or job_activo())
+    pod = pod_en_marcha()
+    en_marcha = bool(pod or job_activo())
     with lock:
         if parada["estado"] == "parando":
             if not fuerte or parada.get("modo") == "fuerte":
@@ -313,7 +337,7 @@ def iniciar(motivo, fuerte=False):
                           desde=ahora(), detalle="iniciando")
         respuesta = dict(parada)
     log(evento="parar", motivo=motivo, modo="fuerte" if fuerte else "ordenada")
-    threading.Thread(target=escalera, args=(motivo, fuerte), daemon=True).start()
+    threading.Thread(target=escalera, args=(motivo, fuerte, pod), daemon=True).start()
     return 202, respuesta
 
 

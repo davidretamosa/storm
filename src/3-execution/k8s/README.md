@@ -231,8 +231,10 @@ ordenado envía el motivo `desde grafana`; las llamadas a `POST /parar` sin moti
 motivo por defecto `botón rojo`.
 
 `POST /parar-fuerte` ofrece una parada inmediata independiente: intenta guardar la marca de
-abortada, borra el Job y fuerza la eliminación del pod sin esperar esos plazos. Puede perderse
-el informe HTML final. El endpoint acepta el mismo motivo opcional que `/parar`.
+abortada en segundo plano, borra el Job y fuerza la eliminación del pod mientras apaga los
+workers en paralelo, sin esperar esos plazos. Prioriza detener la carga: la marca de abortada y
+el informe HTML final pueden no llegar a guardarse. El endpoint acepta el mismo motivo opcional
+que `/parar`.
 
 ## Dashboard de Grafana
 
