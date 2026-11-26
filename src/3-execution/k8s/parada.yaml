@@ -17,7 +17,7 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["get", "list"]            # localizar el pod de JMeter y ver si ha terminado
+    verbs: ["get", "list", "delete"]  # localizar, consultar y forzar el borrado del pod JMeter
   - apiGroups: [""]
     resources: ["pods/exec"]
     verbs: ["get", "create"]          # shutdown.sh y stoptest.sh dentro del pod
@@ -90,6 +90,17 @@ spec:
             #   value: "cambia-esto"
             - name: CORS_ORIGEN
               value: "http://localhost:30000,http://localhost:40000"
+            # Autoparada por métricas (ver parada/parada.py). Apagada por defecto; se puede
+            # activar y cambiar sin tocar este fichero, justo antes de lanzar la prueba:
+            #   curl -X POST localhost:30082/autoparada -d '{"activa": true}'     (kind: 40082)
+            - name: AUTOPARADA
+              value: "0"
+            - name: AUTOPARADA_CRITERIOS     # nombre=umbral separados por comas
+              value: "errores_servidor=5,latencia_p95=1000"
+            # Para vigilar también los reinicios y el estado de los pods de la app objetivo
+            # (comprueba la etiqueta con: kubectl -n lab-jmeter get pods --show-labels):
+            # - name: APP_SELECTOR
+            #   value: "app=objetivo"
           ports:
             - containerPort: 8080
           readinessProbe:
@@ -106,4 +117,4 @@ spec:
               cpu: 20m
               memory: 64Mi
             limits:
-              memory: 128Mi
+              memory: 256Mi                   # el vigilante lee el .jtl de JMeter
