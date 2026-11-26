@@ -16,4 +16,5 @@ git -C "$(git rev-parse --show-toplevel)" archive "$RAMA" "$CODIGO" | tar -x -C 
 
 echo "Construyendo la imagen bankapp con el código de $RAMA ($(git log -1 --format='%h, %ad' --date=short "$RAMA"))..."
 docker build -q -t bankapp:latest -f Dockerfile "$TMP/$CODIGO" >/dev/null
-echo "Imagen bankapp lista. Despliégala con: ../k8s/desplegar.sh"
+echo "Imagen bankapp lista. Despliégala como app objetivo con:"
+echo "  ../k8s/desplegar-objetivo.sh --imagen bankapp:latest --salud /actuator/health/readiness"

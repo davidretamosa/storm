@@ -1,13 +1,13 @@
 # Laboratorio de carga en Kubernetes
 
 El mismo laboratorio que `../lab-jmeter` (Docker Compose), pero desplegado en Kubernetes:
-JMeter lanza tráfico contra la app, InfluxDB guarda los resultados, Prometheus mide CPU y
-memoria y Grafana lo enseña todo.
+JMeter lanza tráfico contra la app, InfluxDB guarda los resultados, Prometheus recoge CPU y
+memoria, y Grafana lo muestra todo.
 
 ```
 Job jmeter ──peticiones HTTP──▶ app
      └──métricas de la prueba──▶ InfluxDB ──┐
-cAdvisor del kubelet ──▶ Prometheus ────────┴──▶ Grafana
+cAdvisor del kubelet ──▶ Prometheus ──▶ Grafana
 ```
 
 ## Requisitos
@@ -20,12 +20,129 @@ cAdvisor del kubelet ──▶ Prometheus ────────┴──▶ G
 Desde esta carpeta (`src/3-execution/k8s`):
 
 ```bash
-./desplegar.sh                 # construye las imágenes y levanta app, InfluxDB, Prometheus y Grafana
+./desplegar.sh                 # construye las imágenes y levanta app, JMeter, parada y monitorización
 ./lanzar-prueba.sh normal      # lanza una prueba con el escenario indicado (por defecto, humo)
-./cargar-plan.sh plan.jmx      # o carga un plan ya generado que te pasen (p. ej. de 2-processing)
-./lanzar-prueba.sh normal storm     # inyecta en la bankapp el plan cargado con cargar-plan.sh
+./desplegar-objetivo.sh --imagen <imagen> [--puerto N]   # la app a probar (o --jar <fichero.jar>)
+./cargar-plan.sh plan.jmx      # carga el plan de esa app (p. ej. el que genera 2-processing)
+./lanzar-prueba.sh normal storm     # inyecta en la app objetivo el plan cargado con cargar-plan.sh
+./lanzar-prueba.sh normal storm --workers 3   # la misma prueba, repartida entre 3 workers
 ./quitar.sh                    # borra todo el laboratorio del clúster
 ```
+
+## La app objetivo: cualquier aplicación
+
+La app que se pone a prueba no está fijada: se despliega con `desplegar-objetivo.sh` a partir de
+lo que entregue quien la quiera probar, y dentro del clúster se llama siempre `objetivo`.
+
+| Opción | Qué es |
+|---|---|
+| `--imagen <imagen>` | Imagen de la app, de cualquier lenguaje: de un registro (`registro.empresa.com/app:1.0`) o construida en el equipo |
+| `--jar <fichero.jar>` | `.jar` ejecutable: se mete en una imagen de Java genérica (`../objetivo/Dockerfile`) |
+| `--puerto N` | Puerto en el que escucha (por defecto 8080) |
+| `--salud /ruta` | Ruta que responde 200 cuando la app está lista (opcional; sin ella basta con que el puerto acepte conexiones) |
+| `--java N` | Versión de Java para `--jar` (por defecto 21) |
+
+```bash
+# La bankapp, la app de ejemplo del proyecto (imagen publicada por GitHub Actions)
+./desplegar-objetivo.sh --imagen ghcr.io/davidretamosa/storm-bankapp --salud /actuator/health/readiness
+# Una app en Go en el puerto 80 (probado con traefik/whoami)
+./desplegar-objetivo.sh --imagen traefik/whoami:v1.10.3 --puerto 80
+```
+
+`lanzar-prueba.sh ... storm` le pasa al plan `host=objetivo` y el puerto de la app, así que el
+`.jmx` funciona sin cambios con tal de que use `${__P(host)}` y `${__P(port)}`. Volver a ejecutar
+`desplegar-objetivo.sh` sustituye la app. La app sale en `localhost:30081` (en kind,
+`localhost:40081`) y sus criterios de aprobado están en `criterios/objetivo.properties`.
+
+## Pruebas distribuidas (`--workers N`)
+
+Sin la opción, un único pod de JMeter genera toda la carga. Con `--workers N` la prueba se
+reparte, igual que el modo distribuido de JMeter entre varios equipos, pero lo gestiona
+Kubernetes:
+
+```
+                       ┌──▶ worker 1 ──┐
+Job jmeter (master) ───┼──▶ worker 2 ──┼──peticiones──▶ app objetivo
+  reparte y evalúa     └──▶ worker 3 ──┘
+                            └──métricas──▶ InfluxDB ──▶ Grafana
+```
+
+1. `lanzar-prueba.sh` pide N réplicas del Deployment `jmeter-worker` (`kubectl scale`) y espera
+   a que estén listas. Cada worker es un `jmeter-server` con la misma imagen que el master.
+2. Saca sus IPs del Service `jmeter-worker` y se las pasa al Job, que hace de master (`-R`).
+3. Los workers generan la carga y envían las métricas a InfluxDB; el master recoge los
+   resultados y los evalúa con los mismos criterios de siempre.
+4. Al terminar, los workers vuelven a 0 réplicas (no ocupan memoria entre pruebas).
+
+Los **usuarios del escenario son el total** y se reparten entre los workers redondeando hacia
+arriba (`normal`, 20 usuarios con 3 workers = 7 en cada uno), así que un escenario genera la
+misma carga con 1 o con N workers. Nunca se usan más workers que usuarios.
+
+Detalles que ya resuelven los ficheros (son los mismos que hacían falta con varios equipos):
+las propiedades de la prueba se envían a los workers con `-G` (con `-J` solo las vería el
+master), los puertos RMI son fijos (1099 y 50000 en los workers, 60000 en el master), RMI va
+sin SSL y cada pod se anuncia con su IP (`java.rmi.server.hostname`).
+
+## Varios nodos con kind
+
+El Kubernetes de Docker Desktop tiene un solo nodo. Para ver el laboratorio como en un clúster
+real (o en la nube), [kind](https://kind.sigs.k8s.io/) crea un clúster en el que cada nodo es un
+contenedor de Docker: `kind/cluster.yaml` define 1 nodo de control y 3 de trabajo. Los mismos
+ficheros sirven sin cambios; Kubernetes reparte los pods entre los nodos y pone cada worker de
+JMeter en un nodo distinto.
+
+```bash
+winget install Kubernetes.kind                 # una sola vez (abrir una terminal nueva después)
+kind create cluster --config kind/cluster.yaml # crea el clúster "storm" y lo deja activo
+./desplegar.sh                                 # detecta kind y copia las imágenes a los nodos
+./cargar-plan.sh <plan.jmx>
+./lanzar-prueba.sh normal storm --workers 3
+kubectl -n lab-jmeter get pods -o wide         # columna NODE: en qué nodo está cada pod
+```
+
+En kind los servicios salen por los puertos **400xx** (Grafana `localhost:40000`, app objetivo
+`localhost:40081`, Prometheus `localhost:40090`) para no chocar con los 300xx de Docker Desktop.
+
+Para cambiar de clúster: `kubectl config use-context docker-desktop` o `kind-storm`. Todos los
+scripts usan el clúster activo. Para borrarlo: `kind delete cluster --name storm`.
+
+Ten en cuenta:
+- Los 4 nodos comparten la memoria y la CPU del mismo equipo, así que los tiempos son algo
+  peores que en Docker Desktop: sirve para demostrar el reparto, no para medir rendimiento.
+- Con los dos clústeres encendidos la memoria de Docker se queda justa: conviene parar uno
+  (en Docker Desktop, `kubectl -n lab-jmeter scale deploy --all --replicas=0`).
+- En kind cada nodo tiene su propio almacén de imágenes; por eso `desplegar.sh` hace
+  `kind load docker-image`. En un clúster en la nube se subirían a un registro.
+
+## Imágenes publicadas en GitHub (registro)
+
+Por defecto, las imágenes propias del laboratorio (app de prueba y JMeter) se construyen en cada
+equipo. Un clúster en la nube no puede usarlas: necesita descargarlas de un **registro**. Para
+eso, GitHub Actions (`.github/workflows/imagenes.yml`) las construye y las publica en GitHub
+Container Registry cada vez que cambia su código en `develop`, junto con la bankapp de ejemplo:
+
+| Imagen | Qué es |
+|---|---|
+| `ghcr.io/davidretamosa/storm-lab-app` | La app de prueba del laboratorio |
+| `ghcr.io/davidretamosa/storm-lab-jmeter` | JMeter (master y workers) |
+| `ghcr.io/davidretamosa/storm-bankapp` | La bankapp, la app de ejemplo (`src/1-input/java-app-mock`) |
+
+Etiquetas: `latest` (lo último de `develop`), el nombre de la rama y el commit (`sha-xxxxxxx`).
+
+Para desplegar con ellas, sin construir nada en el equipo:
+
+```bash
+REGISTRO=ghcr.io/davidretamosa ./desplegar.sh
+REGISTRO=ghcr.io/davidretamosa ETIQUETA=sha-1a2b3c4 ./desplegar.sh   # una versión concreta
+./desplegar-objetivo.sh --imagen ghcr.io/davidretamosa/storm-bankapp --salud /actuator/health/readiness
+```
+
+`desplegar.sh` cambia las imágenes de los `.yaml` por las del registro y Kubernetes las
+descarga; `lanzar-prueba.sh` usa para el master la misma imagen que los workers, así que no
+necesita la opción. Para volver a las locales, `./desplegar.sh` sin `REGISTRO`. La app objetivo
+va aparte, con `desplegar-objetivo.sh --imagen`, venga del registro que venga.
+
+Como el repositorio es público, las imágenes también lo son: se descargan sin contraseña.
 
 ## Escenarios
 
@@ -52,9 +169,11 @@ crear uno nuevo basta con copiar un fichero, cambiar los números y volver a eje
 ## Criterios de aprobado
 
 Cada prueba termina con un veredicto, **SUPERADA** o **NO SUPERADA**, según los criterios del
-objetivo (`criterios/app.properties` y `criterios/bankapp.properties`):
+objetivo (`criterios/app.properties` para la app de prueba y `criterios/objetivo.properties`
+para la app objetivo). Los de la app objetivo son los de la bankapp; ajústalos a lo que se exija
+a la app que se prueba:
 
-| Criterio | app | bankapp |
+| Criterio | app de prueba | app objetivo |
 |---|---|---|
 | `MAX_ERRORES_PCT`: % máximo de **errores del servidor** de cada operación | 1 % | 0,1 % |
 | `MAX_P95_MS`: el 95 % de las peticiones debe responder en menos de | 1000 ms | 500 ms |
@@ -74,7 +193,7 @@ La evaluación la hace `ejecutar-y-evaluar.sh` dentro del pod de JMeter.
 ## Resultados de cada prueba
 
 Cada prueba deja sus resultados en el equipo, en `resultados/<escenario>-<objetivo>-<fecha>/`
-(esta carpeta no se sube a git):
+(con `--workers N`: `<escenario>-<objetivo>-Nworkers-<fecha>/`; esta carpeta no se sube a git):
 
 | Fichero | Qué es |
 |---|---|
@@ -92,8 +211,68 @@ del escenario queda guardado en InfluxDB (etiqueta `application`).
 | Servicio   | URL                                        |
 |------------|--------------------------------------------|
 | App        | http://localhost:30080/hello               |
+| App objetivo | http://localhost:30081                   |
 | Grafana    | http://localhost:30000/d/lab-jmeter-k8s (admin / admin) |
 | Prometheus | http://localhost:30090                     |
+
+## Botones para parar la prueba desde Grafana
+
+El dashboard usa botones experimentales del panel **Canvas** para enviar `POST /parar` y
+`POST /parar-fuerte` al servicio `parada`. Grafana publica el servicio mediante NodePort. El
+navegador envía directamente las peticiones a ese puerto, por lo que `parada.yaml` permite CORS
+desde las URLs locales de Grafana.
+
+Los botones usan `http://localhost:30082` en Docker Desktop y
+`http://localhost:40082` en kind. Para abrir Grafana desde otro host, cambia las URL de los
+botones en `grafana/lab-jmeter-k8s.json` y añade el origen exacto de Grafana a `CORS_ORIGEN` en
+`parada.yaml`. La parada ordenada conserva el cierre actual: espera hasta `ESPERA_SHUTDOWN` (45 s por defecto)
+tras `shutdown.sh`, y puede esperar otros `ESPERA_STOPTEST` (20 s) tras `stoptest.sh`. El botón
+ordenado envía el motivo `desde grafana`; las llamadas a `POST /parar` sin motivo mantienen el
+motivo por defecto `botón rojo`.
+
+`POST /parar-fuerte` ofrece una parada inmediata independiente: intenta guardar la marca de
+abortada en segundo plano, borra el Job y fuerza la eliminación del pod mientras apaga los
+workers en paralelo, sin esperar esos plazos. Prioriza detener la carga: la marca de abortada y
+el informe HTML final pueden no llegar a guardarse. El endpoint acepta el mismo motivo opcional
+que `/parar`.
+
+## Dashboard de Grafana
+
+El dashboard sitúa arriba los dos botones Canvas (parada ordenada y fuerte), seguidos de
+estadísticas de la prueba. Incluye una tabla ordenable por endpoint con peticiones, porcentaje
+de errores y p95, además de gráficas de CPU y memoria del inyector JMeter. Los umbrales visuales
+son: error 1/5 %, p95 1000/3000 ms,
+CPU 1/2 núcleos y memoria 70/90 % del límite. No se envían notificaciones externas porque no
+hay un canal de alertas configurado.
+
+La CPU se muestra en núcleos (JMeter solicita 500m y no tiene límite de CPU); la memoria
+muestra el uso respecto al límite de 3 GiB. La tabla de endpoints usa métricas de InfluxDB; el
+p95 representa la media de los percentiles que JMeter publica en intervalos de 5 segundos, no
+un percentil recalculado sobre todas las muestras del rango.
+
+`desplegar.sh` reinicia Prometheus para que cargue su configuración de scrape actualizada.
+
+Para comprobar que funciona, durante una prueba mira el estado con
+`kubectl -n lab-jmeter get jobs` y pulsa el botón. La petición devuelve HTTP **202** si inicia
+la parada; el Job debería desaparecer o terminar y los logs de `parada` mostrarán
+`"evento":"parar"` y después `"evento":"fin"`:
+
+```bash
+kubectl -n lab-jmeter logs deploy/parada --since=5m
+kubectl -n lab-jmeter get jobs
+```
+
+`GET http://localhost:30082/estado` distingue una prueba en curso (`estado: "activa"`) de la
+parada anterior (`estado: "terminada"`, `prueba_en_marcha: false`). En kind usa el puerto
+`40082`.
+
+`Failed to fetch` normalmente significa que el navegador no pudo conectar o leer la respuesta
+(no es un código HTTP del servicio). Canvas envía JSON y hace un preflight `OPTIONS`; en DevTools
+→ Network deben aparecer el `OPTIONS` (204) y después el `POST`. Si solo aparece `OPTIONS`,
+revisa Console y que CORS permita el origen de Grafana y las cabeceras `Content-Type` y
+`X-Grafana-Action`. Un `POST` con HTTP 409 significa que no hay una prueba activa. No expongas
+el NodePort a Internet: cualquiera que pueda alcanzarlo podría parar una prueba; CORS no es un
+mecanismo de autenticación.
 
 ## Qué hay en cada fichero
 
@@ -101,17 +280,21 @@ del escenario queda guardado en InfluxDB (etiqueta `application`).
 |---|---|
 | `00-namespace.yaml` | Espacio `lab-jmeter`: todo el laboratorio vive aquí |
 | `almacenamiento.yaml` | Discos persistentes (InfluxDB, Prometheus, resultados) y el pod auxiliar `resultados` |
-| `app.yaml` | La app bajo prueba (Deployment + Service `app:8080`) |
+| `app.yaml` | La app de prueba del laboratorio (Deployment + Service `app:8080`) |
+| `objetivo.yaml` | Plantilla de la app objetivo; la rellena `desplegar-objetivo.sh` (imagen, puerto, salud) |
+| `desplegar-objetivo.sh` | Despliega como app objetivo cualquier app, a partir de su imagen o de su `.jar` |
 | `influxdb.yaml` | InfluxDB 1.8, base de datos `jmeter` |
 | `prometheus.yaml` | Prometheus y sus permisos para leer el cAdvisor del kubelet |
 | `grafana.yaml` | Grafana con datasources y dashboard ya configurados |
-| `jmeter-job.yaml` | Una prueba = un Job que ejecuta `plan.jmx` y termina |
-| `simulador-job.yaml` | Job con el simulador de clientes (`../simulador/simulador.py`) |
+| `parada.yaml` | Servicio de parada NodePort y permisos Kubernetes |
+| `jmeter-job.yaml` | Una prueba = un Job que ejecuta `plan.jmx` y termina (con `--workers`, hace de master) |
+| `jmeter-workers.yaml` | Workers de JMeter para las pruebas distribuidas (Deployment a 0 réplicas + Service) |
+| `kind/cluster.yaml` | Clúster de 4 nodos con kind para probar el reparto entre máquinas |
 | `backend-listener.xml` | Envío de métricas a InfluxDB que se añade a los planes que no lo traen |
 | `ejecutar-y-evaluar.sh` | Dentro del Job: lanza JMeter y comprueba los criterios de aprobado |
-| `criterios/` | Criterios de aprobado de cada objetivo (`app` y `bankapp`, que usa el objetivo `storm`) |
+| `criterios/` | Criterios de aprobado de cada objetivo (`app` y `objetivo`, que usa el objetivo `storm`) |
 | `escenarios/` | Carga de cada escenario (humo, normal, pico, estres, rotura) |
-| `grafana/lab-jmeter-k8s.json` | Dashboard: el de `lab-jmeter` con CPU y memoria por pod |
+| `grafana/lab-jmeter-k8s.json` | Dashboard con controles, errores, latencias e inyector JMeter |
 
 No se duplica nada de `../lab-jmeter`: `desplegar.sh` construye las imágenes desde
 `lab-jmeter/app` y `lab-jmeter/jmeter`, y mete en ConfigMaps su `plan.jmx` y la
