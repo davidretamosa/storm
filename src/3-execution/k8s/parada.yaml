@@ -17,7 +17,7 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["get", "list"]            # localizar el pod de JMeter y ver si ha terminado
+    verbs: ["get", "list", "delete"]  # localizar, consultar y forzar el borrado del pod JMeter
   - apiGroups: [""]
     resources: ["pods/exec"]
     verbs: ["get", "create"]          # shutdown.sh y stoptest.sh dentro del pod

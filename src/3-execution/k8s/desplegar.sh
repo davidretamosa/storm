@@ -80,6 +80,7 @@ echo "3/4 Desplegando discos, app, InfluxDB, Prometheus y Grafana..."
 kubectl apply -f almacenamiento.yaml
 aplicar app.yaml
 kubectl apply -f influxdb.yaml -f prometheus.yaml -f grafana.yaml
+kubectl -n "$NS" rollout restart deploy/prometheus
 # Workers de JMeter para pruebas distribuidas: se crean a 0 y lanzar-prueba.sh --workers N los
 # arranca. El Job de cada prueba (master) usa la misma imagen que ellos.
 aplicar jmeter-workers.yaml

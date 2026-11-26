@@ -40,6 +40,8 @@ Criterios disponibles (se elige cuáles y con qué umbral):
 Endpoints:
   POST /parar       inicia la parada y responde enseguida (202); la escalera sigue en segundo plano.
                     Motivo opcional: ?motivo=...  o cuerpo JSON {"motivo": "..."}
+  POST /parar-fuerte  marca la prueba como abortada, borra el Job y fuerza el borrado del pod.
+                      No espera a shutdown.sh; puede perderse el informe HTML final.
   GET  /estado      en qué punto va la parada y si hay una prueba en marcha (incluye autoparada)
   GET  /autoparada  configuración actual, últimos valores medidos y criterios disponibles
   POST /autoparada  cambia la configuración en caliente (por ejemplo, justo antes de lanzar):
@@ -166,7 +168,9 @@ def job_activo():
 def termino(pod):
     """True cuando el pod ya no está en marcha (terminó o ya no existe)."""
     try:
-        return v1.read_namespaced_pod(pod, NS).status.phase in ("Succeeded", "Failed")
+        recurso = v1.read_namespaced_pod(pod, NS)
+        return (recurso.metadata.deletion_timestamp is not None
+                or recurso.status.phase in ("Succeeded", "Failed"))
     except ApiException as e:
         if e.status == 404:
             return True
@@ -200,6 +204,14 @@ def borrar_job():
             raise
 
 
+def matar_pod(pod):
+    try:
+        v1.delete_namespaced_pod(pod, NS, grace_period_seconds=0)
+    except ApiException as e:
+        if e.status != 404:
+            raise
+
+
 def apagar_workers():
     """lanzar-prueba.sh los apaga al terminar, pero si el Job se borró a la fuerza o la prueba
     se lanzó desde otro sitio podrían quedarse encendidos."""
@@ -225,25 +237,52 @@ def nivel(n, texto):
     log(evento="nivel", nivel=n, detalle=texto)
 
 
-def escalera(motivo):
+def modo_fuerte():
+    with lock:
+        return parada.get("modo") == "fuerte"
+
+
+def escalera(motivo, fuerte=False):
     try:
         pod = pod_en_marcha()
+        if fuerte:
+            if pod:
+                with lock:
+                    parada["pod"] = pod
+                nivel(0, "marcando la prueba como abortada")
+                intentar(pod, ["sh", "-c", 'printf "%s\\n" "$0" > "$RESULTADOS/abortada.txt"', motivo])
+            nivel(3, "borrando el Job y el pod sin esperar a la parada ordenada")
+            borrar_job()
+            if pod:
+                matar_pod(pod)
+            apagar_workers()
+            final("terminada", "la prueba ha sido parada por la fuerza")
+            return
+
         if pod:
             with lock:
                 parada["pod"] = pod
             nivel(0, "escribiendo abortada.txt")
             intentar(pod, ["sh", "-c", 'printf "%s\\n" "$0" > "$RESULTADOS/abortada.txt"', motivo])
+            if modo_fuerte():
+                return
             nivel(1, "shutdown: parada ordenada")
             intentar(pod, [f"{JMETER_BIN}/shutdown.sh"])
             if not esperar_fin(pod, ESPERA_SHUTDOWN):
+                if modo_fuerte():
+                    return
                 nivel(2, "stoptest: parada inmediata")
                 intentar(pod, [f"{JMETER_BIN}/stoptest.sh"])
                 if not esperar_fin(pod, ESPERA_STOPTEST):
+                    if modo_fuerte():
+                        return
                     nivel(3, "borrando el Job")
                     borrar_job()
         else:                                   # el pod aún no ha arrancado: no hay nada que parar
             nivel(3, "el pod no está en marcha: borrando el Job")
             borrar_job()
+        if modo_fuerte():
+            return
         apagar_workers()
         final("terminada", "la prueba ha terminado")
     except Exception as e:                      # noqa: BLE001
@@ -257,19 +296,24 @@ def final(estado, detalle):
     log(evento="fin", estado=estado, detalle=detalle)
 
 
-def iniciar(motivo):
+def iniciar(motivo, fuerte=False):
     """Arranca la parada. Devuelve (código HTTP, respuesta)."""
     en_marcha = bool(pod_en_marcha() or job_activo())
     with lock:
-        if parada["estado"] == "parando":       # idempotente: ya hay una parada en curso
-            return 202, dict(parada)
-        if not en_marcha:
-            return 409, {"estado": "sin_prueba", "detalle": "no hay ninguna prueba en marcha"}
-        parada.clear()
-        parada.update(estado="parando", nivel=0, motivo=motivo, desde=ahora(), detalle="iniciando")
+        if parada["estado"] == "parando":
+            if not fuerte or parada.get("modo") == "fuerte":
+                return 202, dict(parada)
+            parada.update(modo="fuerte", motivo=motivo, detalle="iniciando parada fuerte")
+        else:
+            if not en_marcha:
+                return 409, {"estado": "sin_prueba", "detalle": "no hay ninguna prueba en marcha"}
+            parada.clear()
+            parada.update(estado="parando", nivel=0, motivo=motivo,
+                          modo="fuerte" if fuerte else "ordenada",
+                          desde=ahora(), detalle="iniciando")
         respuesta = dict(parada)
-    log(evento="parar", motivo=motivo)
-    threading.Thread(target=escalera, args=(motivo,), daemon=True).start()
+    log(evento="parar", motivo=motivo, modo="fuerte" if fuerte else "ordenada")
+    threading.Thread(target=escalera, args=(motivo, fuerte), daemon=True).start()
     return 202, respuesta
 
 
@@ -671,7 +715,8 @@ class Parada(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", origen)
             self.send_header("Vary", "Origin")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+            self.send_header("Access-Control-Allow-Headers",
+                             "Content-Type, Authorization, X-Grafana-Action")
 
     def responder(self, codigo, datos):
         cuerpo = json.dumps(datos, ensure_ascii=False).encode()
@@ -718,7 +763,7 @@ class Parada(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             ruta, _, query = self.path.partition("?")
-            if ruta not in ("/parar", "/autoparada"):
+            if ruta not in ("/parar", "/parar-fuerte", "/autoparada"):
                 return self.responder(404, {"error": "no existe"})
             if not self.autorizado():
                 return self.responder(401, {"error": "falta el token"})
@@ -728,7 +773,7 @@ class Parada(BaseHTTPRequestHandler):
             motivo = parse_qs(query).get("motivo", [""])[0]
             if not motivo:
                 motivo = str((self.leer_json() or {}).get("motivo", ""))
-            codigo, respuesta = iniciar(limpiar(motivo))
+            codigo, respuesta = iniciar(limpiar(motivo), fuerte=ruta == "/parar-fuerte")
             self.responder(codigo, respuesta)
         except Exception as e:                  # noqa: BLE001
             log(evento="error", error=repr(e))
