@@ -25,6 +25,7 @@ aplicar() {
   if [ -n "$REGISTRO" ]; then
     sed -e "s|image: lab-app:latest|image: $REGISTRO/storm-lab-app:$ETIQUETA|" \
         -e "s|image: lab-jmeter:latest|image: $REGISTRO/storm-lab-jmeter:$ETIQUETA|" \
+        -e "s|image: lab-parada:latest|image: $REGISTRO/storm-parada:$ETIQUETA|" \
         -e "s|imagePullPolicy: Never|imagePullPolicy: Always|" "$1" | kubectl apply -f -
   else
     kubectl apply -f "$1"
@@ -57,7 +58,8 @@ else
     echo "   (descargando JMeter, solo la primera vez: unos minutos)"
     docker build -q -t lab-jmeter "$LAB/jmeter" >/dev/null
   fi
-  cargar_en_kind lab-app:latest lab-jmeter:latest
+  docker build -q -t lab-parada parada >/dev/null
+  cargar_en_kind lab-app:latest lab-jmeter:latest lab-parada:latest
 fi
 
 echo "2/4 Creando el namespace y los ConfigMaps (plan.jmx y Grafana)..."
@@ -78,10 +80,12 @@ echo "3/4 Desplegando discos, app, InfluxDB, Prometheus y Grafana..."
 kubectl apply -f almacenamiento.yaml
 aplicar app.yaml
 kubectl apply -f influxdb.yaml -f prometheus.yaml -f grafana.yaml
+kubectl -n "$NS" rollout restart deploy/prometheus
 # Workers de JMeter para pruebas distribuidas: se crean a 0 y lanzar-prueba.sh --workers N los
 # arranca. El Job de cada prueba (master) usa la misma imagen que ellos.
 aplicar jmeter-workers.yaml
-DESPLIEGUES="resultados app influxdb prometheus grafana"
+aplicar parada.yaml
+DESPLIEGUES="resultados app influxdb prometheus grafana parada"
 
 echo "4/4 Esperando a que todo esté listo..."
 for d in $DESPLIEGUES; do
@@ -93,6 +97,7 @@ echo "Laboratorio listo:"
 echo "  App de prueba: http://localhost:${PUERTO}0080/hello"
 echo "  Grafana:       http://localhost:${PUERTO}0000/d/lab-jmeter-k8s  (admin / admin)"
 echo "  Prometheus:    http://localhost:${PUERTO}0090"
+echo "  Parada:        http://localhost:${PUERTO}0082/estado  (POST /parar)"
 if kubectl -n "$NS" get deploy objetivo >/dev/null 2>&1; then
   echo "  App objetivo:  http://localhost:${PUERTO}0081  ($(kubectl -n "$NS" get deploy objetivo -o jsonpath='{.spec.template.spec.containers[0].image}'))"
 else

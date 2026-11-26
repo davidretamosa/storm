@@ -12,8 +12,8 @@ apiVersion: kind.x-k8s.io/v1alpha4
 name: storm
 nodes:
   - role: control-plane
-    # Los NodePort del laboratorio se sacan al equipo con otros puertos, para no chocar
-    # con los del Kubernetes de Docker Desktop si están los dos encendidos.
+    # Los NodePort expuestos del laboratorio se sacan al equipo con otros puertos, para no
+    # chocar con los del Kubernetes de Docker Desktop si están los dos encendidos.
     extraPortMappings:
       - containerPort: 30000   # Grafana     -> http://localhost:40000
         hostPort: 40000
@@ -26,6 +26,9 @@ nodes:
         listenAddress: "127.0.0.1"
       - containerPort: 30090   # Prometheus  -> http://localhost:40090
         hostPort: 40090
+        listenAddress: "127.0.0.1"
+      - containerPort: 30082   # parada     -> http://localhost:40082
+        hostPort: 40082
         listenAddress: "127.0.0.1"
   - role: worker
   - role: worker

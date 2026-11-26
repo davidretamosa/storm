@@ -84,6 +84,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "noValue": "0",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -140,6 +141,7 @@
         "defaults": {
           "unit": "percent",
           "decimals": 2,
+          "noValue": "0.00%",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -172,11 +174,11 @@
     },
     {
       "id": 4,
-      "title": "Tiempo medio (ms)",
+      "title": "p95 latencia (ms)",
       "type": "stat",
       "gridPos": {
-        "x": 12,
-        "y": 0,
+        "x": 0,
+        "y": 4,
         "w": 4,
         "h": 4
       },
@@ -193,12 +195,32 @@
           },
           "rawQuery": true,
           "resultFormat": "time_series",
-          "query": "SELECT mean(\"avg\") FROM \"jmeter\" WHERE \"transaction\" = 'all' AND $timeFilter"
+          "query": "SELECT mean(/^pct95[.]0$/) FROM \"jmeter\" WHERE \"transaction\" = 'all' AND $timeFilter"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "ms"
+          "unit": "ms",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1000
+              },
+              {
+                "color": "red",
+                "value": 3000
+              }
+            ]
+          }
         },
         "overrides": []
       },
@@ -217,8 +239,8 @@
       "title": "Datos recibidos",
       "type": "stat",
       "gridPos": {
-        "x": 16,
-        "y": 0,
+        "x": 4,
+        "y": 4,
         "w": 4,
         "h": 4
       },
@@ -259,8 +281,8 @@
       "title": "Datos enviados",
       "type": "stat",
       "gridPos": {
-        "x": 20,
-        "y": 0,
+        "x": 8,
+        "y": 4,
         "w": 4,
         "h": 4
       },
@@ -302,7 +324,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 0,
-        "y": 4,
+        "y": 8,
         "w": 12,
         "h": 8
       },
@@ -337,7 +359,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 12,
-        "y": 4,
+        "y": 8,
         "w": 12,
         "h": 8
       },
@@ -371,7 +393,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 0,
-        "y": 12,
+        "y": 16,
         "w": 12,
         "h": 8
       },
@@ -405,7 +427,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 12,
-        "y": 12,
+        "y": 16,
         "w": 12,
         "h": 8
       },
@@ -422,12 +444,32 @@
           },
           "rawQuery": true,
           "resultFormat": "time_series",
-          "query": "SELECT mean(\"pct90.0\") AS \"p90\", mean(\"pct95.0\") AS \"p95\", mean(\"pct99.0\") AS \"p99\" FROM \"jmeter\" WHERE \"transaction\" = 'all' AND $timeFilter GROUP BY time(5s)"
+          "query": "SELECT mean(/^pct90[.]0$/) AS \"p90\", mean(/^pct95[.]0$/) AS \"p95\", mean(/^pct99[.]0$/) AS \"p99\" FROM \"jmeter\" WHERE \"transaction\" = 'all' AND $timeFilter GROUP BY time(5s)"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "ms"
+          "unit": "ms",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1000
+              },
+              {
+                "color": "red",
+                "value": 3000
+              }
+            ]
+          }
         },
         "overrides": []
       }
@@ -438,7 +480,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 0,
-        "y": 20,
+        "y": 24,
         "w": 8,
         "h": 8
       },
@@ -472,7 +514,7 @@
       "type": "gauge",
       "gridPos": {
         "x": 8,
-        "y": 20,
+        "y": 24,
         "w": 8,
         "h": 8
       },
@@ -545,7 +587,7 @@
       "type": "gauge",
       "gridPos": {
         "x": 16,
-        "y": 20,
+        "y": 24,
         "w": 8,
         "h": 8
       },
@@ -611,6 +653,474 @@
         "minVizHeight": 75
       },
       "description": "Memoria que usa ahora cada pod (app de prueba, app objetivo y JMeter), sobre 2 GiB (el límite de la app objetivo). Naranja a partir del 70 %, rojo a partir del 90 %."
+    },
+    {
+      "id": 14,
+      "title": "Parada de JMeter",
+      "type": "canvas",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "options": {
+        "inlineEditing": false,
+        "root": {
+          "background": {
+            "color": {
+              "fixed": "transparent"
+            }
+          },
+          "border": {
+            "color": {
+              "fixed": "transparent"
+            }
+          },
+          "constraint": {
+            "horizontal": "left",
+            "vertical": "top"
+          },
+          "elements": [
+            {
+              "background": {
+                "color": {
+                  "fixed": "transparent"
+                }
+              },
+              "border": {
+                "color": {
+                  "fixed": "dark-green"
+                }
+              },
+              "config": {
+                "align": "center",
+                "api": {
+                  "contentType": "application/json",
+                  "data": "{\"motivo\":\"desde grafana\"}",
+                  "endpoint": "http://localhost:30082/parar",
+                  "headerParams": [],
+                  "method": "POST",
+                  "queryParams": []
+                },
+                "color": {
+                  "fixed": "#F0F4FD"
+                },
+                "size": 20,
+                "style": {
+                  "variant": "primary"
+                },
+                "text": {
+                  "fixed": "PARADA ORDENADA",
+                  "mode": "fixed"
+                }
+              },
+              "constraint": {
+                "horizontal": "left",
+                "vertical": "top"
+              },
+              "name": "Parada ordenada",
+              "placement": {
+                "height": 58,
+                "left": 16,
+                "top": 70,
+                "width": 245
+              },
+              "type": "button"
+            },
+            {
+              "background": {
+                "color": {
+                  "fixed": "transparent"
+                }
+              },
+              "border": {
+                "color": {
+                  "fixed": "dark-red"
+                }
+              },
+              "config": {
+                "align": "center",
+                "api": {
+                  "contentType": "application/json",
+                  "data": "{\"motivo\":\"desde grafana parada fuerte\"}",
+                  "endpoint": "http://localhost:30082/parar-fuerte",
+                  "headerParams": [],
+                  "method": "POST",
+                  "queryParams": []
+                },
+                "color": {
+                  "fixed": "#F0F4FD"
+                },
+                "size": 20,
+                "style": {
+                  "variant": "destructive"
+                },
+                "text": {
+                  "fixed": "PARADA FUERTE",
+                  "mode": "fixed"
+                }
+              },
+              "constraint": {
+                "horizontal": "left",
+                "vertical": "top"
+              },
+              "name": "Parada fuerte",
+              "placement": {
+                "height": 58,
+                "left": 280,
+                "top": 70,
+                "width": 245
+              },
+              "type": "button"
+            }
+          ],
+          "name": "Controles de parada",
+          "placement": {
+            "height": 100,
+            "left": 0,
+            "rotation": 0,
+            "top": 0,
+            "width": 100
+          },
+          "type": "frame"
+        },
+        "showAdvancedTypes": true,
+        "tooltip": {
+          "disableForOneClick": false,
+          "mode": "single"
+        },
+        "zoomToContent": false
+      },
+      "description": "Parada ordenada: conserva el flujo de cierre del test. Parada fuerte: borra el Job y fuerza la eliminación del pod; puede perderse el informe HTML."
+    },
+    {
+      "id": 15,
+      "title": "Endpoints: peticiones, errores y p95",
+      "type": "table",
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 24,
+        "h": 10
+      },
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influxdb-jmeter"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influxdb-jmeter"
+          },
+          "rawQuery": true,
+          "resultFormat": "table",
+          "query": "SELECT sum(\"count\") AS \"requests\", sum(\"countError\") AS \"errors\", 100 * sum(\"countError\") / sum(\"count\") AS \"error_pct\", mean(/^pct95[.]0$/) AS \"p95_ms\" FROM \"jmeter\" WHERE \"transaction\" != 'all' AND \"transaction\" != 'internal' AND \"statut\" = 'all' AND $timeFilter GROUP BY \"transaction\""
+        }
+      ],
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {
+            "mode": "columns"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "time": true
+            },
+            "renameByName": {
+              "transaction": "Endpoint",
+              "requests": "Peticiones",
+              "errors": "Errores",
+              "error_pct": "Error %",
+              "p95_ms_pct95.0": "p95 (ms)"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Errores"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "noValue",
+                "value": "0"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Error %"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "noValue",
+                "value": "0.00%"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 1
+                    },
+                    {
+                      "color": "red",
+                      "value": 5
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p95 (ms)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 1000
+                    },
+                    {
+                      "color": "red",
+                      "value": 3000
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "description": "Ordenable por cualquier columna. El p95 es la media de los percentiles que JMeter publica por intervalo de 5 s; el porcentaje de error es el de muestras fallidas de JMeter."
+    },
+    {
+      "id": 17,
+      "title": "CPU del inyector JMeter",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 42,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"lab-jmeter\", pod=~\"jmeter-.*\", container=\"\"}[1m]))",
+          "legendFormat": "JMeter",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cores",
+          "decimals": 2,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 2
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        },
+        "thresholdsStyle": {
+          "mode": "line"
+        }
+      },
+      "description": "CPU usada por el contenedor JMeter, en núcleos. Los umbrales de 1 y 2 núcleos son avisos visuales; el contenedor no tiene un límite de CPU configurado."
+    },
+    {
+      "id": 18,
+      "title": "Memoria del inyector JMeter",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 42,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "container_memory_working_set_bytes{namespace=\"lab-jmeter\", pod=~\"jmeter-.*\", container=\"\"}",
+          "legendFormat": "JMeter",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "max": 3221225472,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 2254857830
+              },
+              {
+                "color": "red",
+                "value": 2899102925
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        },
+        "thresholdsStyle": {
+          "mode": "line"
+        }
+      },
+      "description": "Memoria working set del contenedor JMeter. Aviso al 70 % y crítico al 90 % del límite de 3 GiB del pod."
     }
   ],
   "templating": {

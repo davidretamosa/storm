@@ -105,11 +105,13 @@ echo "Escenario '$ESCENARIO' contra $OBJETIVO en marcha:"
 grep -v '^#' "escenarios/$ESCENARIO.properties" | grep . | sed 's/^/  /'
 echo "Dashboard: http://localhost:30000/d/lab-jmeter-k8s"
 kubectl -n "$NS" wait --for=condition=ready pod -l job-name=jmeter --timeout=120s >/dev/null 2>&1 || true
-kubectl -n "$NS" logs -f job/jmeter
+# Si la prueba se para a la fuerza (se borra el Job) los logs se cortan con error:
+# se sigue igual para copiar lo que haya dado tiempo a guardar
+kubectl -n "$NS" logs -f job/jmeter || true
 
 # logs -f termina cuando acaba el pod; se espera a que el Job tenga su estado final
 for i in $(seq 1 30); do
-  ESTADO=$(kubectl -n "$NS" get job jmeter -o jsonpath='{.status.succeeded}/{.status.failed}')
+    ESTADO=$(kubectl -n "$NS" get job jmeter -o jsonpath='{.status.succeeded}/{.status.failed}' 2>/dev/null || echo borrado)
   [ "$ESTADO" != "/" ] && break
   sleep 1
 done
@@ -127,6 +129,14 @@ if kubectl -n "$NS" cp "$POD:/resultados/$ID" "resultados/$ID" >/dev/null 2>&1; 
   echo "Resultados guardados en k8s/resultados/$ID (informe: informe/index.html)"
 else
   echo "No se pudieron copiar los resultados (siguen en el disco jmeter-resultados del clúster)"
+fi
+
+# Prueba parada antes de tiempo (a mano, con el botón rojo o por una alerta):
+# quien la para deja abortada.txt y el veredicto no cuenta
+if [ -f "resultados/$ID/abortada.txt" ]; then
+  echo "Prueba '$ESCENARIO' contra $OBJETIVO: ABORTADA (parada $(cat "resultados/$ID/abortada.txt"))."
+  [ "$ESTADO" = borrado ] && echo "Sin informe HTML: se puede generar con el .jtl (jmeter -g resultados.jtl -o informe)."
+  exit 3
 fi
 
 case "$ESTADO" in

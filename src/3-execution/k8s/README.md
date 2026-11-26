@@ -1,13 +1,13 @@
 # Laboratorio de carga en Kubernetes
 
 El mismo laboratorio que `../lab-jmeter` (Docker Compose), pero desplegado en Kubernetes:
-JMeter lanza tráfico contra la app, InfluxDB guarda los resultados, Prometheus mide CPU y
-memoria y Grafana lo enseña todo.
+JMeter lanza tráfico contra la app, InfluxDB guarda los resultados, Prometheus recoge CPU y
+memoria, y Grafana lo muestra todo.
 
 ```
 Job jmeter ──peticiones HTTP──▶ app
      └──métricas de la prueba──▶ InfluxDB ──┐
-cAdvisor del kubelet ──▶ Prometheus ────────┴──▶ Grafana
+cAdvisor del kubelet ──▶ Prometheus ──▶ Grafana
 ```
 
 ## Requisitos
@@ -20,7 +20,7 @@ cAdvisor del kubelet ──▶ Prometheus ────────┴──▶ G
 Desde esta carpeta (`src/3-execution/k8s`):
 
 ```bash
-./desplegar.sh                 # construye las imágenes y levanta app, InfluxDB, Prometheus y Grafana
+./desplegar.sh                 # construye las imágenes y levanta app, JMeter, parada y monitorización
 ./lanzar-prueba.sh normal      # lanza una prueba con el escenario indicado (por defecto, humo)
 ./desplegar-objetivo.sh --imagen <imagen> [--puerto N]   # la app a probar (o --jar <fichero.jar>)
 ./cargar-plan.sh plan.jmx      # carga el plan de esa app (p. ej. el que genera 2-processing)
@@ -215,6 +215,65 @@ del escenario queda guardado en InfluxDB (etiqueta `application`).
 | Grafana    | http://localhost:30000/d/lab-jmeter-k8s (admin / admin) |
 | Prometheus | http://localhost:30090                     |
 
+## Botones para parar la prueba desde Grafana
+
+El dashboard usa botones experimentales del panel **Canvas** para enviar `POST /parar` y
+`POST /parar-fuerte` al servicio `parada`. Grafana publica el servicio mediante NodePort. El
+navegador envía directamente las peticiones a ese puerto, por lo que `parada.yaml` permite CORS
+desde las URLs locales de Grafana.
+
+Los botones usan `http://localhost:30082` en Docker Desktop y
+`http://localhost:40082` en kind. Para abrir Grafana desde otro host, cambia las URL de los
+botones en `grafana/lab-jmeter-k8s.json` y añade el origen exacto de Grafana a `CORS_ORIGEN` en
+`parada.yaml`. La parada ordenada conserva el cierre actual: espera hasta `ESPERA_SHUTDOWN` (45 s por defecto)
+tras `shutdown.sh`, y puede esperar otros `ESPERA_STOPTEST` (20 s) tras `stoptest.sh`. El botón
+ordenado envía el motivo `desde grafana`; las llamadas a `POST /parar` sin motivo mantienen el
+motivo por defecto `botón rojo`.
+
+`POST /parar-fuerte` ofrece una parada inmediata independiente: intenta guardar la marca de
+abortada en segundo plano, borra el Job y fuerza la eliminación del pod mientras apaga los
+workers en paralelo, sin esperar esos plazos. Prioriza detener la carga: la marca de abortada y
+el informe HTML final pueden no llegar a guardarse. El endpoint acepta el mismo motivo opcional
+que `/parar`.
+
+## Dashboard de Grafana
+
+El dashboard sitúa arriba los dos botones Canvas (parada ordenada y fuerte), seguidos de
+estadísticas de la prueba. Incluye una tabla ordenable por endpoint con peticiones, porcentaje
+de errores y p95, además de gráficas de CPU y memoria del inyector JMeter. Los umbrales visuales
+son: error 1/5 %, p95 1000/3000 ms,
+CPU 1/2 núcleos y memoria 70/90 % del límite. No se envían notificaciones externas porque no
+hay un canal de alertas configurado.
+
+La CPU se muestra en núcleos (JMeter solicita 500m y no tiene límite de CPU); la memoria
+muestra el uso respecto al límite de 3 GiB. La tabla de endpoints usa métricas de InfluxDB; el
+p95 representa la media de los percentiles que JMeter publica en intervalos de 5 segundos, no
+un percentil recalculado sobre todas las muestras del rango.
+
+`desplegar.sh` reinicia Prometheus para que cargue su configuración de scrape actualizada.
+
+Para comprobar que funciona, durante una prueba mira el estado con
+`kubectl -n lab-jmeter get jobs` y pulsa el botón. La petición devuelve HTTP **202** si inicia
+la parada; el Job debería desaparecer o terminar y los logs de `parada` mostrarán
+`"evento":"parar"` y después `"evento":"fin"`:
+
+```bash
+kubectl -n lab-jmeter logs deploy/parada --since=5m
+kubectl -n lab-jmeter get jobs
+```
+
+`GET http://localhost:30082/estado` distingue una prueba en curso (`estado: "activa"`) de la
+parada anterior (`estado: "terminada"`, `prueba_en_marcha: false`). En kind usa el puerto
+`40082`.
+
+`Failed to fetch` normalmente significa que el navegador no pudo conectar o leer la respuesta
+(no es un código HTTP del servicio). Canvas envía JSON y hace un preflight `OPTIONS`; en DevTools
+→ Network deben aparecer el `OPTIONS` (204) y después el `POST`. Si solo aparece `OPTIONS`,
+revisa Console y que CORS permita el origen de Grafana y las cabeceras `Content-Type` y
+`X-Grafana-Action`. Un `POST` con HTTP 409 significa que no hay una prueba activa. No expongas
+el NodePort a Internet: cualquiera que pueda alcanzarlo podría parar una prueba; CORS no es un
+mecanismo de autenticación.
+
 ## Qué hay en cada fichero
 
 | Fichero | Qué es |
@@ -227,6 +286,7 @@ del escenario queda guardado en InfluxDB (etiqueta `application`).
 | `influxdb.yaml` | InfluxDB 1.8, base de datos `jmeter` |
 | `prometheus.yaml` | Prometheus y sus permisos para leer el cAdvisor del kubelet |
 | `grafana.yaml` | Grafana con datasources y dashboard ya configurados |
+| `parada.yaml` | Servicio de parada NodePort y permisos Kubernetes |
 | `jmeter-job.yaml` | Una prueba = un Job que ejecuta `plan.jmx` y termina (con `--workers`, hace de master) |
 | `jmeter-workers.yaml` | Workers de JMeter para las pruebas distribuidas (Deployment a 0 réplicas + Service) |
 | `kind/cluster.yaml` | Clúster de 4 nodos con kind para probar el reparto entre máquinas |
@@ -234,7 +294,7 @@ del escenario queda guardado en InfluxDB (etiqueta `application`).
 | `ejecutar-y-evaluar.sh` | Dentro del Job: lanza JMeter y comprueba los criterios de aprobado |
 | `criterios/` | Criterios de aprobado de cada objetivo (`app` y `objetivo`, que usa el objetivo `storm`) |
 | `escenarios/` | Carga de cada escenario (humo, normal, pico, estres, rotura) |
-| `grafana/lab-jmeter-k8s.json` | Dashboard: el de `lab-jmeter` con CPU y memoria por pod |
+| `grafana/lab-jmeter-k8s.json` | Dashboard con controles, errores, latencias e inyector JMeter |
 
 No se duplica nada de `../lab-jmeter`: `desplegar.sh` construye las imágenes desde
 `lab-jmeter/app` y `lab-jmeter/jmeter`, y mete en ConfigMaps su `plan.jmx` y la
